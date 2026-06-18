@@ -2,6 +2,7 @@ import { WIRE_COLORS, WIRE_CONNECTOR_ID, readBlueprint } from './blueprint.js';
 import type {
   BlueprintEntity,
   BlueprintInput,
+  BlueprintWire,
   CircuitNetworkSelection,
   ComparatorString,
   FactorioBlueprint,
@@ -107,6 +108,13 @@ export interface SimulationResult {
   ignoredEntities: IgnoredEntity[];
 }
 
+export interface SimulatorState {
+  readonly tick: number;
+  readonly ignoredEntities: readonly IgnoredEntity[];
+  step(): TickOutput;
+  run(ticks: number): TickOutput[];
+}
+
 type SignalBag = Map<SignalName, number>;
 type ReadonlySignalBag = ReadonlyMap<SignalName, number>;
 type EntityMap = Map<number, BlueprintEntity>;
@@ -205,26 +213,65 @@ const SUPPORTED_COMBINATORS = new Set<string>([
 ]);
 
 export function simulateBlueprint(input: BlueprintInput, options: SimulateOptions = {}): SimulationResult {
-  const blueprint = readBlueprint(input);
   const ticks = Number.isInteger(options.ticks) ? options.ticks as number : 3;
-  const externalInputs = normalizeExternalInputs(options.inputs ?? []);
-  const model = buildModel(blueprint, externalInputs);
-  const frames: TickOutput[] = [];
-  let combinatorOutputs = new Map<number, SignalBag>();
-
-  for (let tick = 0; tick < ticks; tick += 1) {
-    const networkSignals = buildNetworkSignals(model, combinatorOutputs, tick);
-    frames.push({
-      tick,
-      networks: formatNetworks(model, networkSignals)
-    });
-    combinatorOutputs = computeNextCombinatorOutputs(model, networkSignals);
-  }
+  const state = createSimulationState(input, { inputs: options.inputs });
+  const frames = state.run(ticks);
 
   return {
     ticks: frames,
-    ignoredEntities: model.ignoredEntities
+    ignoredEntities: [...state.ignoredEntities]
   };
+}
+
+export function createSimulationState(
+  input: BlueprintInput,
+  options: Pick<SimulateOptions, 'inputs'> = {}
+): SimulatorState {
+  const blueprint = readBlueprint(input);
+  const externalInputs = normalizeExternalInputs(options.inputs ?? []);
+  const model = buildModel(blueprint, externalInputs);
+  return new BlueprintSimulatorState(model);
+}
+
+class BlueprintSimulatorState implements SimulatorState {
+  #tick = 0;
+  #combinatorOutputs: Map<number, SignalBag> = new Map<number, SignalBag>();
+  readonly #model: SimulationModel;
+
+  constructor(model: SimulationModel) {
+    this.#model = model;
+  }
+
+  get tick(): number {
+    return this.#tick;
+  }
+
+  get ignoredEntities(): readonly IgnoredEntity[] {
+    return this.#model.ignoredEntities;
+  }
+
+  step(): TickOutput {
+    const networkSignals = buildNetworkSignals(this.#model, this.#combinatorOutputs, this.#tick);
+    const frame: TickOutput = {
+      tick: this.#tick,
+      networks: formatNetworks(this.#model, networkSignals)
+    };
+    this.#combinatorOutputs = computeNextCombinatorOutputs(this.#model, networkSignals);
+    this.#tick += 1;
+    return frame;
+  }
+
+  run(ticks: number): TickOutput[] {
+    if (!Number.isInteger(ticks) || ticks < 0) {
+      throw new Error('ticks must be a non-negative integer.');
+    }
+
+    const frames: TickOutput[] = [];
+    for (let index = 0; index < ticks; index += 1) {
+      frames.push(this.step());
+    }
+    return frames;
+  }
 }
 
 function normalizeExternalInputs(inputs: ExternalInput[] | string): NormalizedExternalInput[] {
@@ -284,7 +331,7 @@ function buildModel(blueprint: FactorioBlueprint, externalInputs: NormalizedExte
     }
   }
 
-  connectEntityWires(entities, dsu);
+  connectBlueprintWires(entities, blueprint.wires ?? [], dsu);
 
   const networks = assignNetworks(entities, dsu);
   const pointToNetwork = new Map<string, string>();
@@ -324,25 +371,26 @@ function connectorIdsFor(entity: BlueprintEntity): number[] {
   return [1];
 }
 
-function connectEntityWires(entities: EntityMap, dsu: DisjointSet): void {
-  for (const entity of entities.values()) {
-    for (const wireSpec of entity.wires ?? []) {
-      const [sourceEntity, sourceWireConnector, targetEntity, targetWireConnector] = wireSpec;
-      const sourcePoint = wireConnectorPoint(sourceWireConnector);
-      const targetPoint = wireConnectorPoint(targetWireConnector);
-      if (!sourcePoint || !targetPoint || sourcePoint.wire !== targetPoint.wire) {
-        continue;
-      }
-      unionWire(
-        entities,
-        dsu,
-        sourceEntity,
-        sourcePoint.connectorId,
-        targetEntity,
-        targetPoint.connectorId,
-        sourcePoint.wire
-      );
+function connectBlueprintWires(entities: EntityMap, wires: ReadonlyArray<BlueprintWire>, dsu: DisjointSet): void {
+  for (const wireSpec of wires) {
+    if (!wireSpec) {
+      continue;
     }
+    const [sourceEntity, sourceWireConnector, targetEntity, targetWireConnector] = wireSpec;
+    const sourcePoint = wireConnectorPoint(sourceWireConnector);
+    const targetPoint = wireConnectorPoint(targetWireConnector);
+    if (!sourcePoint || !targetPoint || sourcePoint.wire !== targetPoint.wire) {
+      continue;
+    }
+    unionWire(
+      entities,
+      dsu,
+      sourceEntity,
+      sourcePoint.connectorId,
+      targetEntity,
+      targetPoint.connectorId,
+      sourcePoint.wire
+    );
   }
 }
 

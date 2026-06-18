@@ -217,6 +217,7 @@ export interface FactorioBlueprint {
   label?: string;
   version?: number;
   entities: BlueprintEntity[];
+  wires?: BlueprintWire[];
   [key: string]: unknown;
 }
 
@@ -324,14 +325,17 @@ export function normalizeBlueprintDocument(data: unknown): FactorioBlueprint {
   }
 
   validateBlueprint(data);
-  return data as unknown as FactorioBlueprint;
+
+  const normalized = { ...data } as Record<string, unknown>;
+  const mergedWires = mergeBlueprintWires(normalized);
+  if (mergedWires.length > 0 || 'wires' in normalized) {
+    normalized.wires = mergedWires;
+  }
+
+  return normalized as unknown as FactorioBlueprint;
 }
 
 function validateBlueprint(blueprint: Record<string, unknown>): void {
-  if ('wires' in blueprint) {
-    throw new Error('Invalid Factorio 2.0 blueprint: wires must be stored on each entity, not on the blueprint object.');
-  }
-
   const entities = blueprint.entities;
   if (!Array.isArray(entities)) {
     throw new Error('Expected a blueprint object with an entities array.');
@@ -348,6 +352,8 @@ function validateBlueprint(blueprint: Record<string, unknown>): void {
   entities.forEach((entity, index) => {
     validateBlueprintEntityWires(entity as Record<string, unknown>, index, entityNumbers);
   });
+
+  validateBlueprintGlobalWires(blueprint, entityNumbers);
 }
 
 function validateBlueprintEntity(entity: Record<string, unknown>, index: number, entityNumbers: Set<number>): void {
@@ -389,6 +395,60 @@ function validateBlueprintEntityWires(entity: Record<string, unknown>, index: nu
       throw new Error(`Invalid Factorio 2.0 blueprint entity ${entity.entity_number} wire ${wireIndex}: source and target entity numbers must exist in the blueprint.`);
     }
   });
+}
+
+function validateBlueprintGlobalWires(blueprint: Record<string, unknown>, entityNumbers: ReadonlySet<number>): void {
+  const wires = blueprint.wires;
+  if (wires === undefined) {
+    return;
+  }
+  if (!Array.isArray(wires)) {
+    throw new Error('Invalid Factorio 2.0 blueprint: wires must be an array when provided.');
+  }
+
+  wires.forEach((wire, wireIndex) => {
+    if (!isBlueprintWire(wire)) {
+      throw new Error(`Invalid Factorio 2.0 blueprint wire ${wireIndex}: expected [source_entity_number, source_wire_connector_id, target_entity_number, target_wire_connector_id].`);
+    }
+    const [sourceEntity, , targetEntity] = wire;
+    if (!entityNumbers.has(sourceEntity) || !entityNumbers.has(targetEntity)) {
+      throw new Error(`Invalid Factorio 2.0 blueprint wire ${wireIndex}: source and target entity numbers must exist in the blueprint.`);
+    }
+  });
+}
+
+function mergeBlueprintWires(blueprint: Record<string, unknown>): BlueprintWire[] {
+  const merged: BlueprintWire[] = [];
+  const seen = new Set<string>();
+
+  const addWire = (wire: unknown): void => {
+    if (!isBlueprintWire(wire)) {
+      return;
+    }
+    const key = wire.join(',');
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    merged.push([wire[0], wire[1], wire[2], wire[3]]);
+  };
+
+  const blueprintWires = blueprint.wires;
+  if (Array.isArray(blueprintWires)) {
+    blueprintWires.forEach(addWire);
+  }
+
+  const entities = blueprint.entities;
+  if (Array.isArray(entities)) {
+    entities.forEach((entity) => {
+      if (!isRecord(entity) || !Array.isArray(entity.wires)) {
+        return;
+      }
+      entity.wires.forEach(addWire);
+    });
+  }
+
+  return merged;
 }
 
 function isBlueprintWire(value: unknown): value is BlueprintWire {

@@ -16,7 +16,7 @@ import type {
   SignalMap,
   WireColor
 } from './blueprint.js';
-import { simulateBlueprint } from './simulator.js';
+import { createSimulationState } from './simulator.js';
 import type { ExternalInput, SimulationResult } from './simulator.js';
 
 export interface DslCompileOptions {
@@ -225,10 +225,15 @@ export function runDslTests(sourceOrCompiled: string | DslCompiledDocument, opti
   const results: DslTestResult[] = testsToRun.map((test) => {
     const maxTick = test.actions.reduce((current, action) => Math.max(current, action.tick), 0);
     const externalInputs = buildExternalInputsForTest(test, maxTick, networkById, entityNumberById, baselineConstantSignals);
-    const simulation = simulateBlueprint(compiled.blueprint, {
-      ticks: maxTick + 1,
-      inputs: externalInputs
-    });
+    const state = createSimulationState(compiled.blueprint, { inputs: externalInputs });
+    const ticks: SimulationResult['ticks'] = [];
+    for (let tick = 0; tick <= maxTick; tick += 1) {
+      ticks.push(state.step());
+    }
+    const simulation: SimulationResult = {
+      ticks,
+      ignoredEntities: [...state.ignoredEntities]
+    };
 
     const assertions = evaluateAssertions(test, simulation, networkById, entityNumberById);
     return {

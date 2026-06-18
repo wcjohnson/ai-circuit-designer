@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { simulateBlueprint } from '../src/simulator.js';
+import { createSimulationState, simulateBlueprint } from '../src/simulator.js';
 import type { ExternalInput, FactorioBlueprint, SignalMap, SimulationResult, WireColor } from '../src/simulator.js';
 
 const root = process.cwd();
@@ -310,4 +310,27 @@ test('arithmetic combinator honors operand circuit network selections', () => {
   });
 
   assert.deepEqual(signalsOn(result, 1, 'red', 1, 2), { 'signal-C': 5 });
+});
+
+test('stateful simulator step() matches one-shot output per tick', async () => {
+  const blueprint = await loadExample('constant-arithmetic.json');
+  const oneShot = simulateBlueprint(blueprint, { ticks: 3 });
+
+  const state = createSimulationState(blueprint);
+  const stepped = [state.step(), state.step(), state.step()];
+
+  assert.deepEqual(stepped, oneShot.ticks);
+  assert.equal(state.tick, 3);
+});
+
+test('stateful simulator run() advances from current tick', async () => {
+  const blueprint = await loadExample('constant-arithmetic.json');
+  const state = createSimulationState(blueprint);
+
+  const first = state.step();
+  const next = state.run(2);
+
+  assert.equal(first.tick, 0);
+  assert.deepEqual(next.map((tick) => tick.tick), [1, 2]);
+  assert.equal(state.tick, 3);
 });

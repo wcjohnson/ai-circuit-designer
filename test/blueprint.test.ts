@@ -26,7 +26,7 @@ import type {
 const validWire: BlueprintWire = [1, WIRE_CONNECTOR_ID.circuitRed, 2, WIRE_CONNECTOR_ID.combinatorInputRed];
 void validWire;
 
-// Factorio 2.0 blueprint JSON uses entity.wires tuple arrays, not legacy connection objects.
+// Factorio wires are tuple arrays.
 // @ts-expect-error BlueprintWire is exactly four numeric tuple members.
 const invalidWire: BlueprintWire = [1, 1, 2, 3, 1];
 void invalidWire;
@@ -163,15 +163,13 @@ function generatedNetworkBlueprint(): FactorioBlueprint {
           }
         ]
       }
-    },
-    wires: [[1, WIRE_CONNECTOR_ID.circuitRed, 2, WIRE_CONNECTOR_ID.circuitRed]]
+    }
   };
 
   const pole: PowerPoleEntity = {
     entity_number: 2,
     name: 'small-electric-pole',
-    position: { x: 1, y: 0 },
-    wires: [[2, WIRE_CONNECTOR_ID.circuitRed, 3, WIRE_CONNECTOR_ID.combinatorInputRed]]
+    position: { x: 1, y: 0 }
   };
 
   const arithmetic: ArithmeticCombinatorEntity = {
@@ -190,28 +188,34 @@ function generatedNetworkBlueprint(): FactorioBlueprint {
 
   return createBlueprint([constant, pole, arithmetic], {
     label: 'generated typed network',
-    version: 562949954142208
+    version: 562949954142208,
+    wires: [
+      [1, WIRE_CONNECTOR_ID.circuitRed, 2, WIRE_CONNECTOR_ID.circuitRed],
+      [2, WIRE_CONNECTOR_ID.circuitRed, 3, WIRE_CONNECTOR_ID.combinatorInputRed]
+    ]
   });
 }
 
 test('reads blueprint JSON wrappers and raw blueprint objects', () => {
   const blueprint = generatedNetworkBlueprint();
+  const normalized = readBlueprint(blueprint);
   const wrappedJson = writeBlueprintJson(blueprint, { pretty: true });
 
-  assert.deepEqual(readBlueprintJson(wrappedJson), blueprint);
-  assert.deepEqual(readBlueprint(blueprint), blueprint);
+  assert.deepEqual(readBlueprintJson(wrappedJson), normalized);
+  assert.deepEqual(readBlueprint(blueprint), normalized);
   assert.equal(JSON.parse(wrappedJson).blueprint.label, 'generated typed network');
 });
 
 test('writes and reads Factorio version-0 compressed blueprint strings', () => {
   const blueprint = generatedNetworkBlueprint();
+  const normalized = readBlueprint(blueprint);
   const blueprintString = writeBlueprintString(blueprint);
 
   assert.match(blueprintString, /^0[A-Za-z0-9+/=]+$/);
-  assert.deepEqual(readBlueprintString(blueprintString), blueprint);
+  assert.deepEqual(readBlueprintString(blueprintString), normalized);
 
   const inflatedJson = inflateSync(Buffer.from(blueprintString.slice(1), 'base64')).toString('utf8');
-  assert.deepEqual(JSON.parse(inflatedJson), { blueprint });
+  assert.deepEqual(JSON.parse(inflatedJson), { blueprint: normalized });
 });
 
 test('generated compressed blueprint strings can be imported by the simulator', () => {
@@ -226,7 +230,7 @@ test('generated compressed blueprint strings can be imported by the simulator', 
   assert.deepEqual(result.ignoredEntities, []);
 });
 
-test('entity wire arrays round-trip through JSON and compressed strings', () => {
+test('global wire arrays round-trip through JSON and compressed strings', () => {
   const constant: ConstantCombinatorEntity = {
     entity_number: 1,
     name: 'constant-combinator',
@@ -242,8 +246,7 @@ test('entity wire arrays round-trip through JSON and compressed strings', () => 
           }
         ]
       }
-    },
-    wires: [[1, WIRE_CONNECTOR_ID.circuitRed, 2, WIRE_CONNECTOR_ID.combinatorInputRed]]
+    }
   };
   const selector: SelectorCombinatorEntity = {
     entity_number: 2,
@@ -256,16 +259,18 @@ test('entity wire arrays round-trip through JSON and compressed strings', () => 
     }
   };
   const blueprint = createBlueprint([constant, selector], {
-    label: 'entity wires'
+    label: 'global wires',
+    wires: [[1, WIRE_CONNECTOR_ID.circuitRed, 2, WIRE_CONNECTOR_ID.combinatorInputRed]]
   });
+  const normalized = readBlueprint(blueprint);
 
   const blueprintString = writeBlueprintString(blueprint);
 
-  assert.deepEqual(readBlueprintString(blueprintString).entities[0]?.wires, [[1, 1, 2, 3]]);
-  assert.deepEqual(readBlueprint(writeBlueprintJson(blueprint)), blueprint);
+  assert.deepEqual(readBlueprintString(blueprintString).wires, [[1, 1, 2, 3]]);
+  assert.deepEqual(readBlueprint(writeBlueprintJson(blueprint)), normalized);
 });
 
-test('rejects legacy 1.x connection fields and top-level wire arrays', () => {
+test('rejects legacy 1.x connection fields', () => {
   assert.throws(() => readBlueprint({
     item: 'blueprint',
     entities: [
@@ -277,14 +282,30 @@ test('rejects legacy 1.x connection fields and top-level wire arrays', () => {
       }
     ]
   }), /legacy connections/);
+});
 
-  assert.throws(() => readBlueprint({
+test('accepts global blueprint wires and dedupes them', () => {
+  const normalized = readBlueprint({
     item: 'blueprint',
     entities: [
-      { entity_number: 1, name: 'constant-combinator', position: { x: 0, y: 0 } }
+      {
+        entity_number: 1,
+        name: 'constant-combinator',
+        position: { x: 0, y: 0 }
+      },
+      { entity_number: 2, name: 'arithmetic-combinator', position: { x: 1, y: 0 } }
     ],
-    wires: [[1, 1, 1, 1]]
-  }), /wires must be stored on each entity/);
+    wires: [
+      [1, WIRE_CONNECTOR_ID.circuitRed, 2, WIRE_CONNECTOR_ID.combinatorInputRed],
+      [1, WIRE_CONNECTOR_ID.circuitRed, 2, WIRE_CONNECTOR_ID.combinatorInputRed],
+      [1, WIRE_CONNECTOR_ID.circuitGreen, 2, WIRE_CONNECTOR_ID.combinatorInputGreen]
+    ]
+  });
+
+  assert.deepEqual(normalized.wires, [
+    [1, WIRE_CONNECTOR_ID.circuitRed, 2, WIRE_CONNECTOR_ID.combinatorInputRed],
+    [1, WIRE_CONNECTOR_ID.circuitGreen, 2, WIRE_CONNECTOR_ID.combinatorInputGreen]
+  ]);
 });
 
 test('passes through unanalysed valid 2.0 entity data unmodified', () => {

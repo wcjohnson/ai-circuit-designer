@@ -2,11 +2,12 @@
 
 import { readFile } from 'node:fs/promises';
 import { stdin as inputStream } from 'node:process';
+import { inflateSync } from 'node:zlib';
 import { simulateBlueprint } from './simulator.js';
 import type { ExternalInput } from './simulator.js';
 import { compileDsl, runDslTests } from './dsl.js';
 
-type Command = 'simulate' | 'compile' | 'test';
+type Command = 'simulate' | 'compile' | 'test' | 'dump';
 
 interface BaseCliOptions {
   pretty: boolean;
@@ -33,7 +34,13 @@ interface TestOptions extends BaseCliOptions {
   testName?: string;
 }
 
-type CliOptions = SimulateOptions | CompileOptions | TestOptions;
+interface DumpOptions extends BaseCliOptions {
+  command: 'dump';
+  inputPath?: string;
+  blueprint?: string;
+}
+
+type CliOptions = SimulateOptions | CompileOptions | TestOptions | DumpOptions;
 
 try {
   const options = parseArgs(process.argv.slice(2));
@@ -53,6 +60,13 @@ try {
     });
 
     printJson(result, options.pretty);
+    process.exit(0);
+  }
+
+  if (options.command === 'dump') {
+    const blueprintInput = await readBlueprintInput(options);
+    const blueprintJson = decodeBlueprintInputToJson(blueprintInput);
+    printJson(blueprintJson, options.pretty);
     process.exit(0);
   }
 
@@ -77,7 +91,7 @@ try {
 
 function parseArgs(args: string[]): CliOptions {
   const first = args[0]?.toLowerCase();
-  const hasExplicitCommand = first === 'simulate' || first === 'compile' || first === 'test';
+  const hasExplicitCommand = first === 'simulate' || first === 'compile' || first === 'test' || first === 'dump';
   const command = (hasExplicitCommand ? first : 'simulate') as Command;
   const commandArgs = hasExplicitCommand ? args.slice(1) : args;
 
@@ -86,6 +100,9 @@ function parseArgs(args: string[]): CliOptions {
   }
   if (command === 'compile') {
     return parseCompileArgs(commandArgs);
+  }
+  if (command === 'dump') {
+    return parseDumpArgs(commandArgs);
   }
   return parseTestArgs(commandArgs);
 }
@@ -203,6 +220,43 @@ function parseTestArgs(args: string[]): TestOptions {
   return options;
 }
 
+function parseDumpArgs(args: string[]): DumpOptions {
+  const options: DumpOptions = {
+    command: 'dump',
+    pretty: false,
+    help: false
+  };
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    switch (arg) {
+      case '--input':
+      case '-i':
+        options.inputPath = readValue(args, ++index, arg);
+        break;
+      case '--blueprint':
+      case '-b':
+        options.blueprint = readValue(args, ++index, arg);
+        break;
+      case '--pretty':
+        options.pretty = true;
+        break;
+      case '--help':
+      case '-h':
+        options.help = true;
+        break;
+      default:
+        throw new Error(`Unknown argument '${arg}'.`);
+    }
+  }
+
+  if (options.inputPath && options.blueprint) {
+    throw new Error('Use either --input or --blueprint, not both.');
+  }
+
+  return options;
+}
+
 function readValue(args: string[], index: number, flag: string): string {
   const value = args[index];
   if (!value || value.startsWith('--')) {
@@ -211,7 +265,7 @@ function readValue(args: string[], index: number, flag: string): string {
   return value;
 }
 
-async function readBlueprintInput(options: SimulateOptions): Promise<string> {
+async function readBlueprintInput(options: Pick<SimulateOptions, 'inputPath' | 'blueprint'>): Promise<string> {
   if (options.blueprint) {
     return options.blueprint;
   }
@@ -241,6 +295,21 @@ function printJson(value: unknown, pretty: boolean): void {
   process.stdout.write('\n');
 }
 
+function decodeBlueprintInputToJson(input: string): unknown {
+  const text = input.trim();
+  if (!text) {
+    throw new Error('Blueprint input is empty.');
+  }
+
+  if (text.startsWith('0')) {
+    const encoded = text.slice(1);
+    const inflated = inflateSync(Buffer.from(encoded, 'base64')).toString('utf8');
+    return JSON.parse(inflated) as unknown;
+  }
+
+  return JSON.parse(text) as unknown;
+}
+
 function printHelp(): void {
   process.stdout.write(
     [
@@ -250,6 +319,7 @@ function printHelp(): void {
       '  simulate       Simulate a Factorio blueprint (default command).',
       '  compile        Compile DSL into blueprint JSON (+ optional tests metadata).',
       '  test           Compile DSL and execute DSL tests.',
+      '  dump           Parse and print blueprint JSON.',
       '',
       'simulate options:',
       '  -i, --input <path>       Read blueprint JSON/string from file',
@@ -264,6 +334,10 @@ function printHelp(): void {
       'test options:',
       '  -d, --dsl <path>       Read DSL source file (or stdin when omitted)',
       '      --test <name>      Run only a single DSL test by name',
+      '',
+      'dump options:',
+      '  -i, --input <path>       Read blueprint JSON/string from file',
+      '  -b, --blueprint <value>  Read blueprint string from CLI argument',
       '',
       'global options:',
       '      --pretty           Pretty-print JSON output',
