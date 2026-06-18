@@ -13,9 +13,7 @@
             { "index": 2, "signal": { "type": "virtual", "name": "signal-B" }, "count": 9 }
           ]
         },
-        "connections": {
-          "1": { "red": [ { "entity_id": 2, "circuit_id": 1 } ] }
-        }
+        "wires": [ [ 1, 1, 2, 3 ] ]
       },
       {
         "entity_number": 2,

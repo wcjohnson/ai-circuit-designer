@@ -12,9 +12,7 @@
             { "index": 1, "signal": { "type": "virtual", "name": "signal-A" }, "count": 8 }
           ]
         },
-        "connections": {
-          "1": { "red": [ { "entity_id": 2, "circuit_id": 1 } ] }
-        }
+        "wires": [ [ 1, 1, 2, 3 ] ]
       },
       {
         "entity_number": 2,
@@ -22,11 +20,20 @@
         "position": { "x": 2, "y": 0 },
         "control_behavior": {
           "decider_conditions": {
-            "first_signal": { "type": "virtual", "name": "signal-A" },
-            "comparator": ">",
-            "constant": 5,
-            "output_signal": { "type": "virtual", "name": "signal-C" },
-            "copy_count_from_input": false
+            "conditions": [
+              {
+                "first_signal": { "type": "virtual", "name": "signal-A" },
+                "comparator": ">",
+                "constant": 5
+              }
+            ],
+            "outputs": [
+              {
+                "signal": { "type": "virtual", "name": "signal-C" },
+                "copy_count_from_input": false,
+                "constant": 1
+              }
+            ]
           }
         }
       }

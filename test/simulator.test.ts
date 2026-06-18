@@ -51,6 +51,46 @@ test('decider combinator emits configured output when condition passes', async (
   assert.deepEqual(signalsOn(result, 1, 'red', 2, 2), { 'signal-C': 1 });
 });
 
+test('decider combinator honors condition and output network selections', () => {
+  const result = simulateBlueprint({
+    item: 'blueprint',
+    entities: [
+      {
+        entity_number: 1,
+        name: 'decider-combinator',
+        position: { x: 0, y: 0 },
+        control_behavior: {
+          decider_conditions: {
+            conditions: [
+              {
+                first_signal: { type: 'virtual', name: 'signal-A' },
+                first_signal_networks: { red: true, green: false },
+                comparator: '>',
+                constant: 5
+              }
+            ],
+            outputs: [
+              {
+                signal: { type: 'virtual', name: 'signal-B' },
+                copy_count_from_input: true,
+                networks: { red: false, green: true }
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }, {
+    ticks: 2,
+    inputs: [
+      { entityId: 1, connectorId: 1, wire: 'red', signals: { 'signal-A': 8, 'signal-B': 100 } },
+      { entityId: 1, connectorId: 1, wire: 'green', signals: { 'signal-A': 1, 'signal-B': 3 } }
+    ]
+  });
+
+  assert.deepEqual(signalsOn(result, 1, 'red', 1, 2), { 'signal-B': 3 });
+});
+
 test('selector combinator select-signal emits the selected signal', async () => {
   const blueprint = await loadExample('selector.json');
   const result = simulateBlueprint(blueprint, { ticks: 2 });
@@ -64,4 +104,35 @@ test('external test inputs can drive combinator input connectors', async () => {
   const result = simulateBlueprint(blueprint, { ticks: 2, inputs });
 
   assert.deepEqual(signalsOn(result, 1, 'red', 1, 2), { 'signal-B': 17 });
+});
+
+test('arithmetic combinator honors operand circuit network selections', () => {
+  const result = simulateBlueprint({
+    item: 'blueprint',
+    entities: [
+      {
+        entity_number: 1,
+        name: 'arithmetic-combinator',
+        position: { x: 0, y: 0 },
+        control_behavior: {
+          arithmetic_conditions: {
+            first_signal: { type: 'virtual', name: 'signal-A' },
+            first_signal_networks: { red: true, green: false },
+            operation: '+',
+            second_signal: { type: 'virtual', name: 'signal-B' },
+            second_signal_networks: { red: false, green: true },
+            output_signal: { type: 'virtual', name: 'signal-C' }
+          }
+        }
+      }
+    ]
+  }, {
+    ticks: 2,
+    inputs: [
+      { entityId: 1, connectorId: 1, wire: 'red', signals: { 'signal-A': 2, 'signal-B': 100 } },
+      { entityId: 1, connectorId: 1, wire: 'green', signals: { 'signal-A': 50, 'signal-B': 3 } }
+    ]
+  });
+
+  assert.deepEqual(signalsOn(result, 1, 'red', 1, 2), { 'signal-C': 5 });
 });

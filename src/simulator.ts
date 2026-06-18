@@ -1,58 +1,53 @@
-import { inflateSync } from 'node:zlib';
+import { WIRE_COLORS, WIRE_CONNECTOR_ID, readBlueprint } from './blueprint.js';
+import type { BlueprintEntity, BlueprintInput, CircuitNetworkSelection, FactorioBlueprint, SignalMap, SignalName, SignalRef, WireColor, WireConnectorId } from './blueprint.js';
 
-export type WireColor = 'red' | 'green';
-export type SignalName = string;
-export type SignalMap = Record<SignalName, number>;
+export {
+  createBlueprint,
+  isBlueprintString,
+  normalizeBlueprintDocument,
+  readBlueprint as parseBlueprint,
+  readBlueprint,
+  readBlueprintJson,
+  readBlueprintString,
+  WIRE_CONNECTOR_ID,
+  wrapBlueprint,
+  writeBlueprintJson,
+  writeBlueprintString
+} from './blueprint.js';
 
-export interface SignalRef {
-  type?: string;
-  name: SignalName;
-}
-
-export interface ConnectionTarget {
-  entity_id?: number;
-  entityId?: number;
-  circuit_id?: number;
-  circuitId?: number;
-  connector_id?: number;
-  connectorId?: number;
-}
-
-export interface BlueprintEntity {
-  entity_number?: number;
-  entityId?: number;
-  id?: number;
-  name: string;
-  connections?: Record<string, Partial<Record<WireColor, ConnectionTarget[]>>>;
-  control_behavior?: Record<string, unknown>;
-  [key: string]: unknown;
-}
-
-export type BlueprintWire = [
-  firstEntity: number,
-  firstConnector: number,
-  secondEntity: number,
-  secondConnector: number,
-  wire: WireColor | 1 | 2
-];
-
-export interface FactorioBlueprint {
-  entities: BlueprintEntity[];
-  wires?: BlueprintWire[];
-  [key: string]: unknown;
-}
-
-export interface BlueprintWrapper {
-  blueprint: FactorioBlueprint;
-}
+export type {
+  ArithmeticCombinatorEntity,
+  ArithmeticConditions,
+  BlueprintEntity,
+  BlueprintInput,
+  BlueprintString,
+  BlueprintWire,
+  BlueprintWrapper,
+  CircuitNetworkSelection,
+  CombinatorEntity,
+  ConstantCombinatorEntity,
+  ConstantFilter,
+  DeciderCombinatorEntity,
+  DeciderCondition,
+  DeciderOutputSpec,
+  FactorioBlueprint,
+  PowerPoleEntity,
+  PowerPoleName,
+  SelectorCombinatorEntity,
+  SelectorConditions,
+  SignalMap,
+  SignalName,
+  SignalRef,
+  SupportedBlueprintEntity,
+  Tags,
+  UnknownBlueprintEntity,
+  WireConnectorId,
+  WireColor
+} from './blueprint.js';
 
 export interface ExternalInput {
   entityId?: number;
-  entity_id?: number;
   connectorId?: number;
-  connector_id?: number;
-  circuitId?: number;
-  circuit_id?: number;
   wire: WireColor;
   signals: SignalMap;
 }
@@ -97,11 +92,16 @@ export interface SimulationResult {
   ignoredEntities: IgnoredEntity[];
 }
 
-export type BlueprintInput = string | FactorioBlueprint | BlueprintWrapper;
 type SignalBag = Map<SignalName, number>;
 type ReadonlySignalBag = ReadonlyMap<SignalName, number>;
 type EntityMap = Map<number, BlueprintEntity>;
 type NumericInput = number | string | undefined | null;
+
+interface CombinatorWireInputs {
+  red: SignalBag;
+  green: SignalBag;
+  combined: SignalBag;
+}
 
 type Operand =
   | { kind: 'constant'; value: number }
@@ -144,8 +144,10 @@ interface ConstantSection {
 
 interface ArithmeticConditions {
   first_signal?: SignalRef | string;
+  first_signal_networks?: CircuitNetworkSelection;
   first_constant?: number;
   second_signal?: SignalRef | string;
+  second_signal_networks?: CircuitNetworkSelection;
   second_constant?: number;
   constant?: number;
   operation?: string;
@@ -154,25 +156,24 @@ interface ArithmeticConditions {
 
 interface DeciderCondition {
   first_signal?: SignalRef | string;
-  first_constant?: number;
+  first_signal_networks?: CircuitNetworkSelection;
   second_signal?: SignalRef | string;
-  second_constant?: number;
+  second_signal_networks?: CircuitNetworkSelection;
   constant?: number;
   comparator?: string;
-  compare_type?: string;
+  compare_type?: 'and' | 'or';
 }
 
 interface DeciderOutputSpec {
-  signal?: SignalRef | string;
-  output_signal?: SignalRef | string;
+  signal: SignalRef | string;
   copy_count_from_input?: boolean;
+  constant?: number;
+  networks?: CircuitNetworkSelection;
 }
 
-interface DeciderConditions extends DeciderCondition {
+interface DeciderConditions {
   conditions?: DeciderCondition[];
   outputs?: DeciderOutputSpec[];
-  output_signal?: SignalRef | string;
-  copy_count_from_input?: boolean;
 }
 
 interface SelectorConditions {
@@ -186,7 +187,6 @@ interface SelectorConditions {
   sort_mode?: string;
 }
 
-const WIRE_COLORS = ['red', 'green'] as const;
 const SUPPORTED_COMBINATORS = new Set<string>([
   'constant-combinator',
   'arithmetic-combinator',
@@ -194,32 +194,8 @@ const SUPPORTED_COMBINATORS = new Set<string>([
   'selector-combinator'
 ]);
 
-export function parseBlueprint(input: string): FactorioBlueprint {
-  if (typeof input !== 'string') {
-    throw new TypeError('Blueprint input must be a string.');
-  }
-
-  const trimmed = input.trim();
-  if (!trimmed) {
-    throw new Error('Blueprint input is empty.');
-  }
-
-  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-    return normalizeBlueprint(JSON.parse(trimmed) as unknown);
-  }
-
-  const version = trimmed[0];
-  if (version !== '0') {
-    throw new Error(`Unsupported blueprint string version '${version}'.`);
-  }
-
-  const decoded = Buffer.from(trimmed.slice(1), 'base64');
-  const json = inflateSync(decoded).toString('utf8');
-  return normalizeBlueprint(JSON.parse(json) as unknown);
-}
-
 export function simulateBlueprint(input: BlueprintInput, options: SimulateOptions = {}): SimulationResult {
-  const blueprint = typeof input === 'string' ? parseBlueprint(input) : normalizeBlueprint(input);
+  const blueprint = readBlueprint(input);
   const ticks = Number.isInteger(options.ticks) ? options.ticks as number : 3;
   const externalInputs = normalizeExternalInputs(options.inputs ?? []);
   const model = buildModel(blueprint, externalInputs);
@@ -241,19 +217,6 @@ export function simulateBlueprint(input: BlueprintInput, options: SimulateOption
   };
 }
 
-function normalizeBlueprint(data: unknown): FactorioBlueprint {
-  if (!isRecord(data)) {
-    throw new Error('Expected a blueprint object with an entities array.');
-  }
-
-  const maybeBlueprint = isRecord(data.blueprint) ? data.blueprint : data;
-  if (!Array.isArray(maybeBlueprint.entities)) {
-    throw new Error('Expected a blueprint object with an entities array.');
-  }
-
-  return maybeBlueprint as unknown as FactorioBlueprint;
-}
-
 function normalizeExternalInputs(inputs: ExternalInput[] | string): NormalizedExternalInput[] {
   if (typeof inputs === 'string') {
     return normalizeExternalInputs(JSON.parse(inputs) as ExternalInput[]);
@@ -263,8 +226,8 @@ function normalizeExternalInputs(inputs: ExternalInput[] | string): NormalizedEx
   }
 
   return inputs.map((input, index) => {
-    const entityId = Number(input.entityId ?? input.entity_id);
-    const connectorId = Number(input.connectorId ?? input.connector_id ?? input.circuitId ?? input.circuit_id ?? 1);
+    const entityId = Number(input.entityId);
+    const connectorId = Number(input.connectorId ?? 1);
     const wire = input.wire;
     if (!Number.isInteger(entityId) || !Number.isInteger(connectorId)) {
       throw new Error(`External input ${index} must specify entityId and connectorId.`);
@@ -286,7 +249,7 @@ function buildModel(blueprint: FactorioBlueprint, externalInputs: NormalizedExte
   const ignoredEntities: IgnoredEntity[] = [];
 
   for (const entity of blueprint.entities) {
-    const entityId = Number(entity.entity_number ?? entity.entityId ?? entity.id);
+    const entityId = Number(entity.entity_number);
     if (!Number.isInteger(entityId)) {
       continue;
     }
@@ -306,8 +269,7 @@ function buildModel(blueprint: FactorioBlueprint, externalInputs: NormalizedExte
     }
   }
 
-  connectEntityConnections(entities, dsu);
-  connectBlueprintWires(blueprint, entities, dsu);
+  connectEntityWires(entities, dsu);
 
   const networks = assignNetworks(entities, dsu);
   const pointToNetwork = new Map<string, string>();
@@ -347,49 +309,44 @@ function connectorIdsFor(entity: BlueprintEntity): number[] {
   return [1];
 }
 
-function connectEntityConnections(entities: EntityMap, dsu: DisjointSet): void {
+function connectEntityWires(entities: EntityMap, dsu: DisjointSet): void {
   for (const entity of entities.values()) {
-    const connections = entity.connections ?? {};
-    for (const [connectorIdText, connectorConnections] of Object.entries(connections)) {
-      const connectorId = Number(connectorIdText);
-      if (!Number.isInteger(connectorId)) {
+    for (const wireSpec of entity.wires ?? []) {
+      const [sourceEntity, sourceWireConnector, targetEntity, targetWireConnector] = wireSpec;
+      const sourcePoint = wireConnectorPoint(sourceWireConnector);
+      const targetPoint = wireConnectorPoint(targetWireConnector);
+      if (!sourcePoint || !targetPoint || sourcePoint.wire !== targetPoint.wire) {
         continue;
       }
-
-      for (const wire of WIRE_COLORS) {
-        const targets = connectorConnections?.[wire] ?? [];
-        for (const target of targets) {
-          unionWire(
-            entities,
-            dsu,
-            entityIdOf(entity),
-            connectorId,
-            target.entity_id ?? target.entityId,
-            target.circuit_id ?? target.circuitId ?? target.connector_id ?? target.connectorId ?? 1,
-            wire
-          );
-        }
-      }
+      unionWire(
+        entities,
+        dsu,
+        sourceEntity,
+        sourcePoint.connectorId,
+        targetEntity,
+        targetPoint.connectorId,
+        sourcePoint.wire
+      );
     }
   }
 }
 
-function connectBlueprintWires(blueprint: FactorioBlueprint, entities: EntityMap, dsu: DisjointSet): void {
-  if (!Array.isArray(blueprint.wires)) {
-    return;
-  }
-
-  for (const wireSpec of blueprint.wires) {
-    if (!Array.isArray(wireSpec) || wireSpec.length < 5) {
-      continue;
-    }
-
-    const [firstEntity, firstConnector, secondEntity, secondConnector, wireOrColor] = wireSpec;
-    const wire = normalizeWireColor(wireOrColor);
-    if (!wire) {
-      continue;
-    }
-    unionWire(entities, dsu, firstEntity, firstConnector, secondEntity, secondConnector, wire);
+function wireConnectorPoint(wireConnectorId: WireConnectorId): { wire: WireColor; connectorId: number } | undefined {
+  switch (wireConnectorId) {
+    case WIRE_CONNECTOR_ID.circuitRed:
+      return { wire: 'red', connectorId: 1 };
+    case WIRE_CONNECTOR_ID.circuitGreen:
+      return { wire: 'green', connectorId: 1 };
+    case WIRE_CONNECTOR_ID.combinatorInputRed:
+      return { wire: 'red', connectorId: 1 };
+    case WIRE_CONNECTOR_ID.combinatorInputGreen:
+      return { wire: 'green', connectorId: 1 };
+    case WIRE_CONNECTOR_ID.combinatorOutputRed:
+      return { wire: 'red', connectorId: 2 };
+    case WIRE_CONNECTOR_ID.combinatorOutputGreen:
+      return { wire: 'green', connectorId: 2 };
+    default:
+      return undefined;
   }
 }
 
@@ -413,16 +370,6 @@ function unionWire(
     pointKey(firstId, firstConnectorId, wire),
     pointKey(secondId, secondConnectorId, wire)
   );
-}
-
-function normalizeWireColor(wire: unknown): WireColor | undefined {
-  if (wire === 'red' || wire === 1) {
-    return 'red';
-  }
-  if (wire === 'green' || wire === 2) {
-    return 'green';
-  }
-  return undefined;
 }
 
 function assignNetworks(entities: EntityMap, dsu: DisjointSet): NetworkModel[] {
@@ -495,12 +442,13 @@ function buildNetworkSignals(model: SimulationModel, combinatorOutputs: Readonly
 function computeNextCombinatorOutputs(model: SimulationModel, networkSignals: ReadonlyMap<string, ReadonlySignalBag>): Map<number, SignalBag> {
   const outputs = new Map<number, SignalBag>();
   for (const entity of model.combinators) {
-    const input = readCombinatorInput(model, networkSignals, entityIdOf(entity));
+    const wireInputs = readCombinatorWireInputs(model, networkSignals, entityIdOf(entity));
+    const input = wireInputs.combined;
     let signals: SignalBag = new Map();
     if (entity.name === 'arithmetic-combinator') {
-      signals = evaluateArithmetic(entity, input);
+      signals = evaluateArithmetic(entity, wireInputs);
     } else if (entity.name === 'decider-combinator') {
-      signals = evaluateDecider(entity, input);
+      signals = evaluateDecider(entity, wireInputs);
     } else if (entity.name === 'selector-combinator') {
       signals = evaluateSelector(entity, input);
     }
@@ -510,17 +458,28 @@ function computeNextCombinatorOutputs(model: SimulationModel, networkSignals: Re
 }
 
 function readCombinatorInput(model: SimulationModel, networkSignals: ReadonlyMap<string, ReadonlySignalBag>, entityId: number): SignalBag {
+  return readCombinatorWireInputs(model, networkSignals, entityId).combined;
+}
+
+function readCombinatorWireInputs(model: SimulationModel, networkSignals: ReadonlyMap<string, ReadonlySignalBag>, entityId: number): CombinatorWireInputs {
+  const red = readCombinatorWireInput(model, networkSignals, entityId, 'red');
+  const green = readCombinatorWireInput(model, networkSignals, entityId, 'green');
   const signals: SignalBag = new Map();
-  for (const wire of WIRE_COLORS) {
-    const networkId = model.pointToNetwork.get(pointKey(entityId, 1, wire));
-    addSignalMaps(signals, networkId ? networkSignals.get(networkId) ?? new Map() : new Map());
-  }
+  addSignalMaps(signals, red);
+  addSignalMaps(signals, green);
+  return { red, green, combined: signals };
+}
+
+function readCombinatorWireInput(model: SimulationModel, networkSignals: ReadonlyMap<string, ReadonlySignalBag>, entityId: number, wire: WireColor): SignalBag {
+  const signals: SignalBag = new Map();
+  const networkId = model.pointToNetwork.get(pointKey(entityId, 1, wire));
+  addSignalMaps(signals, networkId ? networkSignals.get(networkId) ?? new Map() : new Map());
   return signals;
 }
 
 function readConstantSignals(entity: BlueprintEntity): SignalBag {
   const signals: SignalBag = new Map();
-  const behavior = entity.control_behavior ?? {};
+  const behavior = (entity.control_behavior ?? {}) as Record<string, unknown>;
   for (const filter of collectConstantFilters(behavior)) {
     const signal = signalName(filter.signal);
     const count = Number(filter.count ?? 0);
@@ -547,18 +506,21 @@ function collectConstantFilters(behavior: Record<string, unknown>): ConstantFilt
   return filters;
 }
 
-function evaluateArithmetic(entity: BlueprintEntity, input: ReadonlySignalBag): SignalBag {
-  const behavior = entity.control_behavior ?? {};
-  const config = (behavior.arithmetic_conditions ?? behavior.arithmeticCondition ?? {}) as ArithmeticConditions;
+function evaluateArithmetic(entity: BlueprintEntity, inputs: CombinatorWireInputs): SignalBag {
+  const behavior = (entity.control_behavior ?? {}) as Record<string, unknown>;
+  const config = (behavior.arithmetic_conditions ?? {}) as ArithmeticConditions;
   const first = operandFrom(config.first_signal, config.first_constant);
   const second = operandFrom(config.second_signal, config.second_constant ?? config.constant);
+  const firstInput = selectCircuitNetworks(inputs, config.first_signal_networks);
+  const secondInput = selectCircuitNetworks(inputs, config.second_signal_networks);
   const operation = String(config.operation ?? '+').toUpperCase();
   const output = signalName(config.output_signal) ?? 'signal-each';
   const outputSignals: SignalBag = new Map();
 
   if (first.kind === 'each' || second.kind === 'each' || output === 'signal-each') {
-    for (const signal of [...input.keys()].sort()) {
-      const result = applyArithmetic(operation, operandValue(first, input, signal), operandValue(second, input, signal));
+    const signalNames = new Set([...firstInput.keys(), ...secondInput.keys()]);
+    for (const signal of [...signalNames].sort()) {
+      const result = applyArithmetic(operation, operandValue(first, firstInput, signal), operandValue(second, secondInput, signal));
       if (result !== 0) {
         addSignal(outputSignals, output === 'signal-each' ? signal : output, result);
       }
@@ -566,81 +528,125 @@ function evaluateArithmetic(entity: BlueprintEntity, input: ReadonlySignalBag): 
     return outputSignals;
   }
 
-  const result = applyArithmetic(operation, operandValue(first, input), operandValue(second, input));
+  const result = applyArithmetic(operation, operandValue(first, firstInput), operandValue(second, secondInput));
   if (result !== 0) {
     outputSignals.set(output, result);
   }
   return outputSignals;
 }
 
-function evaluateDecider(entity: BlueprintEntity, input: ReadonlySignalBag): SignalBag {
-  const behavior = entity.control_behavior ?? {};
-  const config = (behavior.decider_conditions ?? behavior.deciderCondition ?? behavior.conditions ?? {}) as DeciderConditions;
-  const conditions = Array.isArray(config.conditions) ? config.conditions : [config];
-  const outputs = Array.isArray(config.outputs) ? config.outputs : [{
-    signal: config.output_signal,
-    copy_count_from_input: config.copy_count_from_input
-  }];
-  const firstCondition = conditions.find(Boolean) ?? {};
-  const first = operandFrom(firstCondition.first_signal, firstCondition.first_constant);
-  const second = operandFrom(firstCondition.second_signal, firstCondition.second_constant ?? firstCondition.constant);
-  const comparator = normalizeComparator(firstCondition.comparator ?? firstCondition.compare_type ?? '>');
+function selectCircuitNetworks(inputs: CombinatorWireInputs, selection: CircuitNetworkSelection | undefined): ReadonlySignalBag {
+  const useRed = selection?.red ?? true;
+  const useGreen = selection?.green ?? true;
+  if (useRed && useGreen) {
+    return inputs.combined;
+  }
+  if (useRed) {
+    return inputs.red;
+  }
+  if (useGreen) {
+    return inputs.green;
+  }
+  return new Map();
+}
 
-  if (first.kind === 'each') {
-    return evaluateEachDecider(input, first, second, comparator, outputs);
+function evaluateDecider(entity: BlueprintEntity, inputs: CombinatorWireInputs): SignalBag {
+  const behavior = (entity.control_behavior ?? {}) as Record<string, unknown>;
+  const config = (behavior.decider_conditions ?? {}) as DeciderConditions;
+  const conditions = Array.isArray(config.conditions) ? config.conditions : [];
+  const outputs = Array.isArray(config.outputs) ? config.outputs : [];
+  const firstCondition = conditions[0];
+  if (!firstCondition || outputs.length === 0) {
+    return new Map();
+  }
+  if (operandFrom(firstCondition.first_signal, undefined).kind === 'each') {
+    return evaluateEachDecider(inputs, conditions, outputs);
   }
 
-  const passed = evaluateCondition(first, second, comparator, input);
+  const passed = evaluateDeciderConditions(conditions, inputs);
   if (!passed) {
     return new Map();
   }
-  return emitDeciderOutputs(input, outputs);
+  return emitDeciderOutputs(inputs, outputs);
+}
+
+function evaluateDeciderConditions(conditions: DeciderCondition[], inputs: CombinatorWireInputs, eachSignal?: SignalName): boolean {
+  let result = false;
+  conditions.forEach((condition, index) => {
+    const conditionResult = evaluateDeciderCondition(condition, inputs, eachSignal);
+    if (index === 0) {
+      result = conditionResult;
+      return;
+    }
+    result = condition.compare_type === 'and'
+      ? result && conditionResult
+      : result || conditionResult;
+  });
+  return result;
+}
+
+function evaluateDeciderCondition(condition: DeciderCondition, inputs: CombinatorWireInputs, eachSignal?: SignalName): boolean {
+  const first = operandFrom(condition.first_signal, undefined);
+  const second = operandFrom(condition.second_signal, condition.constant);
+  const comparator = normalizeComparator(condition.comparator ?? '<');
+  const firstInput = selectCircuitNetworks(inputs, condition.first_signal_networks);
+  const secondInput = selectCircuitNetworks(inputs, condition.second_signal_networks);
+  return evaluateCondition(first, second, comparator, firstInput, secondInput, eachSignal);
 }
 
 function evaluateEachDecider(
-  input: ReadonlySignalBag,
-  first: Operand,
-  second: Operand,
-  comparator: string,
+  inputs: CombinatorWireInputs,
+  conditions: DeciderCondition[],
   outputs: DeciderOutputSpec[]
 ): SignalBag {
   const result: SignalBag = new Map();
-  for (const signal of [...input.keys()].sort()) {
-    if (!compareValues(operandValue(first, input, signal), comparator, operandValue(second, input, signal))) {
+  const signalNames = new Set<SignalName>();
+  for (const condition of conditions) {
+    for (const signal of selectCircuitNetworks(inputs, condition.first_signal_networks).keys()) {
+      signalNames.add(signal);
+    }
+    for (const signal of selectCircuitNetworks(inputs, condition.second_signal_networks).keys()) {
+      signalNames.add(signal);
+    }
+  }
+  for (const signal of [...signalNames].sort()) {
+    if (!evaluateDeciderConditions(conditions, inputs, signal)) {
       continue;
     }
     for (const output of outputs) {
-      const outputSignal = signalName(output.signal ?? output.output_signal) ?? 'signal-each';
-      const value = output.copy_count_from_input === false ? 1 : getSignal(input, signal);
+      const outputSignal = signalName(output.signal) ?? 'signal-each';
+      const value = output.copy_count_from_input === false ? output.constant ?? 1 : getSignal(selectCircuitNetworks(inputs, output.networks), signal);
       addSignal(result, outputSignal === 'signal-each' ? signal : outputSignal, value);
     }
   }
   return result;
 }
 
-function evaluateCondition(first: Operand, second: Operand, comparator: string, input: ReadonlySignalBag): boolean {
+function evaluateCondition(first: Operand, second: Operand, comparator: string, firstInput: ReadonlySignalBag, secondInput: ReadonlySignalBag, eachSignal?: SignalName): boolean {
   if (first.kind === 'anything') {
-    return [...input.keys()].some((signal) => compareValues(getSignal(input, signal), comparator, operandValue(second, input, signal)));
+    return [...firstInput.keys()].some((signal) => compareValues(getSignal(firstInput, signal), comparator, operandValue(second, secondInput, signal)));
   }
   if (first.kind === 'every') {
-    const signals = [...input.keys()];
-    return signals.length > 0 && signals.every((signal) => compareValues(getSignal(input, signal), comparator, operandValue(second, input, signal)));
+    const signals = [...firstInput.keys()];
+    return signals.length > 0 && signals.every((signal) => compareValues(getSignal(firstInput, signal), comparator, operandValue(second, secondInput, signal)));
   }
-  return compareValues(operandValue(first, input), comparator, operandValue(second, input));
+  return compareValues(operandValue(first, firstInput, eachSignal), comparator, operandValue(second, secondInput, eachSignal));
 }
 
-function emitDeciderOutputs(input: ReadonlySignalBag, outputs: DeciderOutputSpec[]): SignalBag {
+function emitDeciderOutputs(inputs: CombinatorWireInputs, outputs: DeciderOutputSpec[]): SignalBag {
   const result: SignalBag = new Map();
   for (const output of outputs) {
-    const outputSignal = signalName(output.signal ?? output.output_signal);
+    const outputSignal = signalName(output.signal);
     if (!outputSignal) {
       continue;
     }
     if (outputSignal === 'signal-each') {
-      addSignalMaps(result, input);
+      addSignalMaps(result, selectCircuitNetworks(inputs, output.networks));
       continue;
     }
-    const value = output.copy_count_from_input ? getSignal(input, outputSignal) : 1;
+    const value = output.copy_count_from_input === false
+      ? output.constant ?? 1
+      : getSignal(selectCircuitNetworks(inputs, output.networks), outputSignal);
     if (value !== 0) {
       addSignal(result, outputSignal, value);
     }
@@ -649,7 +655,7 @@ function emitDeciderOutputs(input: ReadonlySignalBag, outputs: DeciderOutputSpec
 }
 
 function evaluateSelector(entity: BlueprintEntity, input: ReadonlySignalBag): SignalBag {
-  const behavior = entity.control_behavior ?? {};
+  const behavior = (entity.control_behavior ?? {}) as Record<string, unknown>;
   const config = (behavior.selector_conditions ?? behavior.selectorCondition ?? {}) as SelectorConditions;
   const operation = String(config.operation ?? config.select_operation ?? config.mode ?? 'select').toLowerCase();
   if (!operation.includes('select')) {
@@ -851,7 +857,7 @@ function comparePoints(left: NetworkPoint | undefined, right: NetworkPoint | und
 }
 
 function entityIdOf(entity: BlueprintEntity): number {
-  return Number(entity.entity_number ?? entity.entityId ?? entity.id);
+  return Number(entity.entity_number);
 }
 
 function pointKey(entityId: number, connectorId: number, wire: WireColor): string {

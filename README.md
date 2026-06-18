@@ -66,7 +66,7 @@ npm run simulate -- --input examples/constant.json --ticks 3
 
 ## Library API
 
-The simulator exports TypeScript types and declarations from `dist/src/simulator.d.ts` after `npm run build`.
+The simulator and blueprint I/O library export TypeScript types and declarations after `npm run build`.
 
 ```ts
 import { simulateBlueprint } from 'ai-circuit-designer';
@@ -74,6 +74,44 @@ import type { FactorioBlueprint, SimulationResult } from 'ai-circuit-designer';
 
 const result: SimulationResult = simulateBlueprint(blueprint as FactorioBlueprint, { ticks: 3 });
 ```
+
+Blueprint JSON and compressed Factorio blueprint strings can be read and written through the blueprint subpath:
+
+```ts
+import {
+  createBlueprint,
+  readBlueprint,
+  WIRE_CONNECTOR_ID,
+  writeBlueprintJson,
+  writeBlueprintString
+} from 'ai-circuit-designer/blueprint';
+import type { ConstantCombinatorEntity, PowerPoleEntity } from 'ai-circuit-designer/blueprint';
+
+const constant: ConstantCombinatorEntity = {
+  entity_number: 1,
+  name: 'constant-combinator',
+  position: { x: 0, y: 0 },
+  control_behavior: {
+    filters: [
+      { index: 1, signal: { type: 'virtual', name: 'signal-A' }, count: 1 }
+    ]
+  },
+  wires: [[1, WIRE_CONNECTOR_ID.circuitRed, 2, WIRE_CONNECTOR_ID.circuitRed]]
+};
+
+const pole: PowerPoleEntity = {
+  entity_number: 2,
+  name: 'small-electric-pole',
+  position: { x: 1, y: 0 }
+};
+
+const blueprint = createBlueprint([constant, pole], { label: 'typed blueprint' });
+const blueprintString = writeBlueprintString(blueprint);
+const sameBlueprint = readBlueprint(blueprintString);
+const json = writeBlueprintJson(sameBlueprint, { pretty: true });
+```
+
+The blueprint library currently types combinators, entity-level Factorio 2.0 `wires` tuple arrays, tags, and power poles. Other entity kinds are intentionally left as generic blueprint entities and are passed through unmodified during read/write cycles. Legacy 1.x-style `connections` objects and top-level blueprint `wires` arrays are rejected.
 
 Input files use this shape:
 
