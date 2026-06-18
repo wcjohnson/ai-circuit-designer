@@ -5,6 +5,7 @@ combinators:
   CAPTURE: decider
     conditions:
       "signal-R" G = 0
+      AND "signal-L" G = 0
       AND anything R != 0
     outputs:
       every = input R
@@ -14,18 +15,39 @@ combinators:
       AND anything R != 0
     outputs:
       every = input R
+  MARK_SET: decider
+    conditions:
+      "signal-R" G = 0
+      AND "signal-L" G = 0
+      AND anything R != 0
+    outputs:
+      "signal-L" = 1
+  MARK_HOLD: decider
+    conditions:
+      "signal-R" G = 0
+      AND "signal-L" G != 0
+    outputs:
+      "signal-L" = 1
 
 wires:
   network Signals: red
     SIG_IN out -> CAPTURE in
+    SIG_IN out -> MARK_SET in
   network Reset: green
     RESET_IN out -> CAPTURE in
     RESET_IN out -> HOLD in
+    RESET_IN out -> MARK_SET in
+    RESET_IN out -> MARK_HOLD in
   network Latch: red
     CAPTURE out -> HOLD in
     CAPTURE out -> OUT in
     HOLD out -> HOLD in
     HOLD out -> OUT in
+  network Lock: green
+    MARK_SET out -> CAPTURE in
+    MARK_SET out -> MARK_HOLD in
+    MARK_HOLD out -> CAPTURE in
+    MARK_HOLD out -> MARK_HOLD in
 
 tests:
   capture-multi-signal-and-hold:
@@ -71,17 +93,62 @@ tests:
       assert signal "signal-B" = 0 on network Latch
       assert signal "signal-C" = 0 on network Latch
 
-  known-bug-continuous-input-accumulates:
+  continuous-input-does-not-accumulate-or-overwrite-latch:
     tick 0:
       apply signal "signal-A" = 5 to network Signals
     tick 1:
       apply signal "signal-A" = 5 to network Signals
       assert signal "signal-A" = 5 on network Latch
     tick 2:
+      apply signal "signal-A" = 7 to network Signals
+      assert signal "signal-A" = 5 on network Latch
+    tick 3:
+      apply signal "signal-C" = 9 to network Signals
+      assert signal "signal-A" = 5 on network Latch
+      assert signal "signal-C" = 0 on network Latch
+    tick 4:
+      apply signal "signal-C" = 9 to network Signals
+      assert signal "signal-A" = 5 on network Latch
+      assert signal "signal-C" = 0 on network Latch
+
+  marker-L-not-visible-or-growing-on-output:
+    tick 0:
       apply signal "signal-A" = 5 to network Signals
-      assert signal "signal-A" = 10 on network Latch
+    tick 1:
+      apply signal "signal-A" = 5 to network Signals
+      assert signal "signal-L" = 0 on network Latch
+    tick 2:
+      apply signal "signal-A" = 5 to network Signals
+      assert signal "signal-L" = 0 on network Latch
     tick 3:
       apply signal "signal-A" = 5 to network Signals
-      assert signal "signal-A" = 15 on network Latch
+      assert signal "signal-L" = 0 on network Latch
     tick 4:
-      assert signal "signal-A" = 20 on network Latch
+      assert signal "signal-L" = 0 on network Latch
+
+  marker-L-bounded-on-internal-lock-network:
+    tick 0:
+      apply signal "signal-A" = 5 to network Signals
+    tick 1:
+      apply signal "signal-A" = 5 to network Signals
+      assert signal "signal-L" = 1 on network Lock
+    tick 2:
+      apply signal "signal-A" = 5 to network Signals
+      assert signal "signal-L" = 1 on network Lock
+    tick 3:
+      apply signal "signal-C" = 9 to network Signals
+      assert signal "signal-L" = 1 on network Lock
+      apply signal "signal-R" = 1 to network Reset
+    tick 4:
+      assert signal "signal-L" = 0 on network Lock
+
+  single-frame-reset-pulse-clears-latch:
+    tick 0:
+      apply signal "signal-A" = 8 to network Signals
+    tick 1:
+      assert signal "signal-A" = 8 on network Latch
+      apply signal "signal-R" = 1 to network Reset
+    tick 2:
+      assert signal "signal-A" = 0 on network Latch
+    tick 3:
+      assert signal "signal-A" = 0 on network Latch

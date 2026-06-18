@@ -51,6 +51,19 @@
               {
                 "first_signal": {
                   "type": "virtual",
+                  "name": "signal-L"
+                },
+                "first_signal_networks": {
+                  "red": false,
+                  "green": true
+                },
+                "constant": 0,
+                "comparator": "=",
+                "compare_type": "and"
+              },
+              {
+                "first_signal": {
+                  "type": "virtual",
                   "name": "signal-anything"
                 },
                 "first_signal_networks": {
@@ -129,6 +142,117 @@
             ]
           }
         }
+      },
+      {
+        "entity_number": 6,
+        "position": {
+          "x": 10,
+          "y": 0
+        },
+        "name": "decider-combinator",
+        "control_behavior": {
+          "decider_conditions": {
+            "conditions": [
+              {
+                "first_signal": {
+                  "type": "virtual",
+                  "name": "signal-R"
+                },
+                "first_signal_networks": {
+                  "red": false,
+                  "green": true
+                },
+                "constant": 0,
+                "comparator": "="
+              },
+              {
+                "first_signal": {
+                  "type": "virtual",
+                  "name": "signal-L"
+                },
+                "first_signal_networks": {
+                  "red": false,
+                  "green": true
+                },
+                "constant": 0,
+                "comparator": "=",
+                "compare_type": "and"
+              },
+              {
+                "first_signal": {
+                  "type": "virtual",
+                  "name": "signal-anything"
+                },
+                "first_signal_networks": {
+                  "red": true,
+                  "green": false
+                },
+                "constant": 0,
+                "comparator": "!=",
+                "compare_type": "and"
+              }
+            ],
+            "outputs": [
+              {
+                "signal": {
+                  "type": "virtual",
+                  "name": "signal-L"
+                },
+                "copy_count_from_input": false,
+                "constant": 1
+              }
+            ]
+          }
+        }
+      },
+      {
+        "entity_number": 7,
+        "position": {
+          "x": 12,
+          "y": 0
+        },
+        "name": "decider-combinator",
+        "control_behavior": {
+          "decider_conditions": {
+            "conditions": [
+              {
+                "first_signal": {
+                  "type": "virtual",
+                  "name": "signal-R"
+                },
+                "first_signal_networks": {
+                  "red": false,
+                  "green": true
+                },
+                "constant": 0,
+                "comparator": "="
+              },
+              {
+                "first_signal": {
+                  "type": "virtual",
+                  "name": "signal-L"
+                },
+                "first_signal_networks": {
+                  "red": false,
+                  "green": true
+                },
+                "constant": 0,
+                "comparator": "!=",
+                "compare_type": "and"
+              }
+            ],
+            "outputs": [
+              {
+                "signal": {
+                  "type": "virtual",
+                  "name": "signal-L"
+                },
+                "copy_count_from_input": false,
+                "constant": 1
+              }
+            ]
+          }
+        }
       }
     ],
     "wires": [
@@ -139,6 +263,12 @@
         1
       ],
       [
+        1,
+        1,
+        6,
+        1
+      ],
+      [
         2,
         2,
         4,
@@ -151,14 +281,26 @@
         2
       ],
       [
-        4,
-        3,
-        5,
-        1
+        2,
+        2,
+        6,
+        2
+      ],
+      [
+        2,
+        2,
+        7,
+        2
       ],
       [
         4,
         3,
+        5,
+        1
+      ],
+      [
+        4,
+        3,
         3,
         1
       ],
@@ -173,6 +315,30 @@
         3,
         3,
         1
+      ],
+      [
+        6,
+        4,
+        4,
+        2
+      ],
+      [
+        6,
+        4,
+        7,
+        2
+      ],
+      [
+        7,
+        4,
+        4,
+        2
+      ],
+      [
+        7,
+        4,
+        7,
+        2
       ]
     ]
   }
