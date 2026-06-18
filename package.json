@@ -1,0 +1,25 @@
+{
+  "name": "ai-circuit-designer",
+  "version": "0.1.0",
+  "description": "Node.js CLI tools for developing and simulating Factorio 2.0 circuit networks.",
+  "type": "module",
+  "bin": {
+    "factorio-circuit-sim": "src/cli.js"
+  },
+  "scripts": {
+    "simulate": "node src/cli.js",
+    "test": "node --test"
+  },
+  "keywords": [
+    "factorio",
+    "circuit-network",
+    "combinator",
+    "blueprint",
+    "simulator"
+  ],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  }
+}

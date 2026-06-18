@@ -1,0 +1,21 @@
+{
+  "blueprint": {
+    "item": "blueprint",
+    "label": "external arithmetic input",
+    "entities": [
+      {
+        "entity_number": 1,
+        "name": "arithmetic-combinator",
+        "position": { "x": 0, "y": 0 },
+        "control_behavior": {
+          "arithmetic_conditions": {
+            "first_signal": { "type": "virtual", "name": "signal-A" },
+            "operation": "+",
+            "second_constant": 10,
+            "output_signal": { "type": "virtual", "name": "signal-B" }
+          }
+        }
+      }
+    ]
+  }
+}

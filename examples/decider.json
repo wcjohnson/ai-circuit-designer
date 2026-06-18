@@ -1,0 +1,35 @@
+{
+  "blueprint": {
+    "item": "blueprint",
+    "label": "decider gate",
+    "entities": [
+      {
+        "entity_number": 1,
+        "name": "constant-combinator",
+        "position": { "x": 0, "y": 0 },
+        "control_behavior": {
+          "filters": [
+            { "index": 1, "signal": { "type": "virtual", "name": "signal-A" }, "count": 8 }
+          ]
+        },
+        "connections": {
+          "1": { "red": [ { "entity_id": 2, "circuit_id": 1 } ] }
+        }
+      },
+      {
+        "entity_number": 2,
+        "name": "decider-combinator",
+        "position": { "x": 2, "y": 0 },
+        "control_behavior": {
+          "decider_conditions": {
+            "first_signal": { "type": "virtual", "name": "signal-A" },
+            "comparator": ">",
+            "constant": 5,
+            "output_signal": { "type": "virtual", "name": "signal-C" },
+            "copy_count_from_input": false
+          }
+        }
+      }
+    ]
+  }
+}

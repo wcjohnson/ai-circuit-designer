@@ -1,0 +1,18 @@
+{
+  "blueprint": {
+    "item": "blueprint",
+    "label": "single constant",
+    "entities": [
+      {
+        "entity_number": 1,
+        "name": "constant-combinator",
+        "position": { "x": 0, "y": 0 },
+        "control_behavior": {
+          "filters": [
+            { "index": 1, "signal": { "type": "virtual", "name": "signal-A" }, "count": 5 }
+          ]
+        }
+      }
+    ]
+  }
+}

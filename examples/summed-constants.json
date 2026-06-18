@@ -1,0 +1,31 @@
+{
+  "blueprint": {
+    "item": "blueprint",
+    "label": "summed constants",
+    "entities": [
+      {
+        "entity_number": 1,
+        "name": "constant-combinator",
+        "position": { "x": 0, "y": 0 },
+        "control_behavior": {
+          "filters": [
+            { "index": 1, "signal": { "type": "virtual", "name": "signal-A" }, "count": 1 }
+          ]
+        },
+        "connections": {
+          "1": { "red": [ { "entity_id": 2, "circuit_id": 1 } ] }
+        }
+      },
+      {
+        "entity_number": 2,
+        "name": "constant-combinator",
+        "position": { "x": 2, "y": 0 },
+        "control_behavior": {
+          "filters": [
+            { "index": 1, "signal": { "type": "virtual", "name": "signal-A" }, "count": 1 }
+          ]
+        }
+      }
+    ]
+  }
+}

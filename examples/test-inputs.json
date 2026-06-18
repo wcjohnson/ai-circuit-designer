@@ -1,0 +1,8 @@
+[
+  {
+    "entityId": 1,
+    "connectorId": 1,
+    "wire": "red",
+    "signals": { "signal-A": 7 }
+  }
+]
