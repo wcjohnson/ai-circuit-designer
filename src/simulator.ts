@@ -63,6 +63,7 @@ export interface ExternalInput {
   connectorId?: number;
   wire: WireColor;
   signals: SignalMap;
+  tick?: number;
 }
 
 interface NormalizedExternalInput {
@@ -70,6 +71,7 @@ interface NormalizedExternalInput {
   connectorId: number;
   wire: WireColor;
   signals: ReadonlySignalBag;
+  tick?: number;
 }
 
 export interface SimulateOptions {
@@ -211,7 +213,7 @@ export function simulateBlueprint(input: BlueprintInput, options: SimulateOption
   let combinatorOutputs = new Map<number, SignalBag>();
 
   for (let tick = 0; tick < ticks; tick += 1) {
-    const networkSignals = buildNetworkSignals(model, combinatorOutputs);
+    const networkSignals = buildNetworkSignals(model, combinatorOutputs, tick);
     frames.push({
       tick,
       networks: formatNetworks(model, networkSignals)
@@ -243,11 +245,16 @@ function normalizeExternalInputs(inputs: ExternalInput[] | string): NormalizedEx
     if (!WIRE_COLORS.includes(wire)) {
       throw new Error(`External input ${index} must specify wire as red or green.`);
     }
+    const tick = input.tick;
+    if (tick !== undefined && (!Number.isInteger(tick) || tick < 0)) {
+      throw new Error(`External input ${index} tick must be a non-negative integer when provided.`);
+    }
     return {
       entityId,
       connectorId,
       wire,
-      signals: normalizeSignalMap(input.signals ?? {})
+      signals: normalizeSignalMap(input.signals ?? {}),
+      tick
     };
   });
 }
@@ -424,7 +431,7 @@ function assignNetworks(entities: EntityMap, dsu: DisjointSet): NetworkModel[] {
   return networks;
 }
 
-function buildNetworkSignals(model: SimulationModel, combinatorOutputs: ReadonlyMap<number, ReadonlySignalBag>): Map<string, SignalBag> {
+function buildNetworkSignals(model: SimulationModel, combinatorOutputs: ReadonlyMap<number, ReadonlySignalBag>, tick: number): Map<string, SignalBag> {
   const networkSignals = new Map<string, SignalBag>(model.networks.map((network) => [network.id, new Map<SignalName, number>()]));
 
   for (const entity of model.constants) {
@@ -435,6 +442,9 @@ function buildNetworkSignals(model: SimulationModel, combinatorOutputs: Readonly
   }
 
   for (const input of model.externalInputs) {
+    if (input.tick !== undefined && input.tick !== tick) {
+      continue;
+    }
     addSignalsToPoint(model, networkSignals, input.entityId, input.connectorId, input.wire, input.signals);
   }
 
