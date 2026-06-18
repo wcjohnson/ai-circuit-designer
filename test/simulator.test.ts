@@ -1,19 +1,18 @@
 import { readFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { fileURLToPath } from 'node:url';
 import { simulateBlueprint } from '../src/simulator.js';
+import type { ExternalInput, FactorioBlueprint, SignalMap, SimulationResult, WireColor } from '../src/simulator.js';
 
-const root = dirname(dirname(fileURLToPath(import.meta.url)));
+const root = process.cwd();
 
-async function loadExample(name) {
-  return JSON.parse(await readFile(join(root, 'examples', name), 'utf8'));
+async function loadExample(name: string): Promise<FactorioBlueprint> {
+  return JSON.parse(await readFile(join(root, 'examples', name), 'utf8')) as FactorioBlueprint;
 }
 
-function signalsOn(result, tick, wire, entityId, connectorId) {
-  const network = result.ticks[tick].networks.find((candidate) => (
+function signalsOn(result: SimulationResult, tick: number, wire: WireColor, entityId: number, connectorId: number): SignalMap {
+  const network = result.ticks[tick]?.networks.find((candidate) => (
     candidate.wire === wire
     && candidate.points.some((point) => point.entityId === entityId && point.connectorId === connectorId)
   ));
@@ -61,7 +60,7 @@ test('selector combinator select-signal emits the selected signal', async () => 
 
 test('external test inputs can drive combinator input connectors', async () => {
   const blueprint = await loadExample('arithmetic-input.json');
-  const inputs = JSON.parse(await readFile(join(root, 'examples', 'test-inputs.json'), 'utf8'));
+  const inputs = JSON.parse(await readFile(join(root, 'examples', 'test-inputs.json'), 'utf8')) as ExternalInput[];
   const result = simulateBlueprint(blueprint, { ticks: 2, inputs });
 
   assert.deepEqual(signalsOn(result, 1, 'red', 1, 2), { 'signal-B': 17 });

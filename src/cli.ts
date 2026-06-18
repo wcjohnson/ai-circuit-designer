@@ -3,6 +3,16 @@
 import { readFile } from 'node:fs/promises';
 import { stdin as inputStream } from 'node:process';
 import { simulateBlueprint } from './simulator.js';
+import type { ExternalInput } from './simulator.js';
+
+interface CliOptions {
+  inputPath?: string;
+  blueprint?: string;
+  inputsPath?: string;
+  ticks: number;
+  pretty: boolean;
+  help: boolean;
+}
 
 try {
   const options = parseArgs(process.argv.slice(2));
@@ -13,7 +23,7 @@ try {
 
   const blueprintInput = await readBlueprintInput(options);
   const externalInputs = options.inputsPath
-    ? JSON.parse(await readFile(options.inputsPath, 'utf8'))
+    ? JSON.parse(await readFile(options.inputsPath, 'utf8')) as ExternalInput[]
     : [];
   const result = simulateBlueprint(blueprintInput, {
     ticks: options.ticks,
@@ -23,12 +33,13 @@ try {
   process.stdout.write(JSON.stringify(result, null, options.pretty ? 2 : 0));
   process.stdout.write('\n');
 } catch (error) {
-  process.stderr.write(`${error.message}\n`);
+  const message = error instanceof Error ? error.message : String(error);
+  process.stderr.write(`${message}\n`);
   process.exit(1);
 }
 
-function parseArgs(args) {
-  const options = {
+function parseArgs(args: string[]): CliOptions {
+  const options: CliOptions = {
     ticks: 3,
     pretty: false,
     help: false
@@ -74,7 +85,7 @@ function parseArgs(args) {
   return options;
 }
 
-function readValue(args, index, flag) {
+function readValue(args: string[], index: number, flag: string): string {
   const value = args[index];
   if (!value || value.startsWith('--')) {
     throw new Error(`${flag} requires a value.`);
@@ -82,7 +93,7 @@ function readValue(args, index, flag) {
   return value;
 }
 
-async function readBlueprintInput(options) {
+async function readBlueprintInput(options: CliOptions): Promise<string> {
   if (options.blueprint) {
     return options.blueprint;
   }
@@ -92,14 +103,14 @@ async function readBlueprintInput(options) {
   return readStdin();
 }
 
-async function readStdin() {
-  const chunks = [];
+async function readStdin(): Promise<string> {
+  const chunks: Buffer[] = [];
   for await (const chunk of inputStream) {
-    chunks.push(chunk);
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   }
   return Buffer.concat(chunks).toString('utf8');
 }
 
-function printHelp() {
+function printHelp(): void {
   process.stdout.write(`Usage: factorio-circuit-sim [options]\n\nOptions:\n  -i, --input <path>       Read blueprint JSON or string from a file\n  -b, --blueprint <value>  Read blueprint from an argument\n      --inputs <path>      Read external test input signals from JSON\n  -t, --ticks <count>      Number of ticks to simulate, default 3\n      --pretty             Pretty-print JSON output\n  -h, --help               Show this help\n\nIf --input and --blueprint are omitted, stdin is used.\n`);
 }

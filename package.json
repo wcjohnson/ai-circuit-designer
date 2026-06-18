@@ -3,12 +3,22 @@
   "version": "0.1.0",
   "description": "Node.js CLI tools for developing and simulating Factorio 2.0 circuit networks.",
   "type": "module",
+  "main": "dist/src/simulator.js",
+  "types": "dist/src/simulator.d.ts",
   "bin": {
-    "factorio-circuit-sim": "src/cli.js"
+    "factorio-circuit-sim": "dist/src/cli.js"
   },
+  "files": [
+    "dist",
+    "examples",
+    "README.md",
+    "AGENTS.md"
+  ],
   "scripts": {
-    "simulate": "node src/cli.js",
-    "test": "node --test"
+    "build": "tsc -p tsconfig.json",
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "simulate": "npm run build --silent && node dist/src/cli.js",
+    "test": "npm run build --silent && node --test dist/test/*.test.js"
   },
   "keywords": [
     "factorio",
@@ -21,5 +31,9 @@
   "license": "MIT",
   "engines": {
     "node": ">=20"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "typescript": "^5.4.0"
   }
 }

@@ -21,32 +21,33 @@ The first tool in the suite is a Factorio circuit network simulator. It reads a 
 
 ```bash
 npm install
+npm run build
 ```
 
-This project currently has no runtime dependencies.
+This project has no runtime dependencies. TypeScript is used at build time and emits JavaScript plus declaration files into `dist/`.
 
 ## CLI Usage
 
 ```bash
-node src/cli.js --input examples/constant.json --ticks 3
+node dist/src/cli.js --input examples/constant.json --ticks 3
 ```
 
 You can also pass a compressed blueprint string directly:
 
 ```bash
-node src/cli.js --blueprint "0..." --ticks 5
+node dist/src/cli.js --blueprint "0..." --ticks 5
 ```
 
 Or pipe JSON through stdin:
 
 ```bash
-type examples/constant.json | node src/cli.js --ticks 3
+type examples/constant.json | node dist/src/cli.js --ticks 3
 ```
 
 PowerShell examples can use `Get-Content`:
 
 ```powershell
-Get-Content examples/constant.json -Raw | node src/cli.js --ticks 3
+Get-Content examples/constant.json -Raw | node dist/src/cli.js --ticks 3
 ```
 
 ## External Test Inputs
@@ -54,7 +55,24 @@ Get-Content examples/constant.json -Raw | node src/cli.js --ticks 3
 Use `--inputs` to attach additional signals to one or more entity connectors. This is useful for testing combinators without adding extra constant combinators to a blueprint.
 
 ```bash
-node src/cli.js --input examples/arithmetic-input.json --inputs examples/test-inputs.json --ticks 4
+node dist/src/cli.js --input examples/arithmetic-input.json --inputs examples/test-inputs.json --ticks 4
+```
+
+During local development you can also use:
+
+```bash
+npm run simulate -- --input examples/constant.json --ticks 3
+```
+
+## Library API
+
+The simulator exports TypeScript types and declarations from `dist/src/simulator.d.ts` after `npm run build`.
+
+```ts
+import { simulateBlueprint } from 'ai-circuit-designer';
+import type { FactorioBlueprint, SimulationResult } from 'ai-circuit-designer';
+
+const result: SimulationResult = simulateBlueprint(blueprint as FactorioBlueprint, { ticks: 3 });
 ```
 
 Input files use this shape:

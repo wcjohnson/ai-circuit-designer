@@ -1,14 +1,200 @@
 import { inflateSync } from 'node:zlib';
 
-const WIRE_COLORS = ['red', 'green'];
-const SUPPORTED_COMBINATORS = new Set([
+export type WireColor = 'red' | 'green';
+export type SignalName = string;
+export type SignalMap = Record<SignalName, number>;
+
+export interface SignalRef {
+  type?: string;
+  name: SignalName;
+}
+
+export interface ConnectionTarget {
+  entity_id?: number;
+  entityId?: number;
+  circuit_id?: number;
+  circuitId?: number;
+  connector_id?: number;
+  connectorId?: number;
+}
+
+export interface BlueprintEntity {
+  entity_number?: number;
+  entityId?: number;
+  id?: number;
+  name: string;
+  connections?: Record<string, Partial<Record<WireColor, ConnectionTarget[]>>>;
+  control_behavior?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export type BlueprintWire = [
+  firstEntity: number,
+  firstConnector: number,
+  secondEntity: number,
+  secondConnector: number,
+  wire: WireColor | 1 | 2
+];
+
+export interface FactorioBlueprint {
+  entities: BlueprintEntity[];
+  wires?: BlueprintWire[];
+  [key: string]: unknown;
+}
+
+export interface BlueprintWrapper {
+  blueprint: FactorioBlueprint;
+}
+
+export interface ExternalInput {
+  entityId?: number;
+  entity_id?: number;
+  connectorId?: number;
+  connector_id?: number;
+  circuitId?: number;
+  circuit_id?: number;
+  wire: WireColor;
+  signals: SignalMap;
+}
+
+interface NormalizedExternalInput {
+  entityId: number;
+  connectorId: number;
+  wire: WireColor;
+  signals: ReadonlySignalBag;
+}
+
+export interface SimulateOptions {
+  ticks?: number;
+  inputs?: ExternalInput[] | string;
+}
+
+export interface IgnoredEntity {
+  entityId: number;
+  name: string;
+}
+
+export interface NetworkPointOutput {
+  entityId: number;
+  connectorId: number;
+  entityName: string;
+}
+
+export interface NetworkOutput {
+  id: string;
+  wire: WireColor;
+  points: NetworkPointOutput[];
+  signals: SignalMap;
+}
+
+export interface TickOutput {
+  tick: number;
+  networks: NetworkOutput[];
+}
+
+export interface SimulationResult {
+  ticks: TickOutput[];
+  ignoredEntities: IgnoredEntity[];
+}
+
+export type BlueprintInput = string | FactorioBlueprint | BlueprintWrapper;
+type SignalBag = Map<SignalName, number>;
+type ReadonlySignalBag = ReadonlyMap<SignalName, number>;
+type EntityMap = Map<number, BlueprintEntity>;
+type NumericInput = number | string | undefined | null;
+
+type Operand =
+  | { kind: 'constant'; value: number }
+  | { kind: 'signal'; signal: SignalName }
+  | { kind: 'each' }
+  | { kind: 'anything' }
+  | { kind: 'every' };
+
+interface NetworkPoint {
+  key: string;
+  entityId: number;
+  connectorId: number;
+  entityName: string;
+}
+
+interface NetworkModel {
+  id: string;
+  wire: WireColor;
+  points: NetworkPoint[];
+}
+
+interface SimulationModel {
+  entities: EntityMap;
+  networks: NetworkModel[];
+  pointToNetwork: Map<string, string>;
+  constants: BlueprintEntity[];
+  combinators: BlueprintEntity[];
+  externalInputs: NormalizedExternalInput[];
+  ignoredEntities: IgnoredEntity[];
+}
+
+interface ConstantFilter {
+  signal?: SignalRef | string;
+  count?: number;
+}
+
+interface ConstantSection {
+  filters?: ConstantFilter[];
+}
+
+interface ArithmeticConditions {
+  first_signal?: SignalRef | string;
+  first_constant?: number;
+  second_signal?: SignalRef | string;
+  second_constant?: number;
+  constant?: number;
+  operation?: string;
+  output_signal?: SignalRef | string;
+}
+
+interface DeciderCondition {
+  first_signal?: SignalRef | string;
+  first_constant?: number;
+  second_signal?: SignalRef | string;
+  second_constant?: number;
+  constant?: number;
+  comparator?: string;
+  compare_type?: string;
+}
+
+interface DeciderOutputSpec {
+  signal?: SignalRef | string;
+  output_signal?: SignalRef | string;
+  copy_count_from_input?: boolean;
+}
+
+interface DeciderConditions extends DeciderCondition {
+  conditions?: DeciderCondition[];
+  outputs?: DeciderOutputSpec[];
+  output_signal?: SignalRef | string;
+  copy_count_from_input?: boolean;
+}
+
+interface SelectorConditions {
+  operation?: string;
+  select_operation?: string;
+  mode?: string;
+  index?: number;
+  select_signal_index?: number;
+  constant?: number;
+  sort?: string;
+  sort_mode?: string;
+}
+
+const WIRE_COLORS = ['red', 'green'] as const;
+const SUPPORTED_COMBINATORS = new Set<string>([
   'constant-combinator',
   'arithmetic-combinator',
   'decider-combinator',
   'selector-combinator'
 ]);
 
-export function parseBlueprint(input) {
+export function parseBlueprint(input: string): FactorioBlueprint {
   if (typeof input !== 'string') {
     throw new TypeError('Blueprint input must be a string.');
   }
@@ -19,7 +205,7 @@ export function parseBlueprint(input) {
   }
 
   if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-    return normalizeBlueprint(JSON.parse(trimmed));
+    return normalizeBlueprint(JSON.parse(trimmed) as unknown);
   }
 
   const version = trimmed[0];
@@ -29,16 +215,16 @@ export function parseBlueprint(input) {
 
   const decoded = Buffer.from(trimmed.slice(1), 'base64');
   const json = inflateSync(decoded).toString('utf8');
-  return normalizeBlueprint(JSON.parse(json));
+  return normalizeBlueprint(JSON.parse(json) as unknown);
 }
 
-export function simulateBlueprint(input, options = {}) {
+export function simulateBlueprint(input: BlueprintInput, options: SimulateOptions = {}): SimulationResult {
   const blueprint = typeof input === 'string' ? parseBlueprint(input) : normalizeBlueprint(input);
-  const ticks = Number.isInteger(options.ticks) ? options.ticks : 3;
+  const ticks = Number.isInteger(options.ticks) ? options.ticks as number : 3;
   const externalInputs = normalizeExternalInputs(options.inputs ?? []);
   const model = buildModel(blueprint, externalInputs);
-  const frames = [];
-  let combinatorOutputs = new Map();
+  const frames: TickOutput[] = [];
+  let combinatorOutputs = new Map<number, SignalBag>();
 
   for (let tick = 0; tick < ticks; tick += 1) {
     const networkSignals = buildNetworkSignals(model, combinatorOutputs);
@@ -55,17 +241,22 @@ export function simulateBlueprint(input, options = {}) {
   };
 }
 
-function normalizeBlueprint(data) {
-  const blueprint = data?.blueprint ?? data;
-  if (!blueprint || !Array.isArray(blueprint.entities)) {
+function normalizeBlueprint(data: unknown): FactorioBlueprint {
+  if (!isRecord(data)) {
     throw new Error('Expected a blueprint object with an entities array.');
   }
-  return blueprint;
+
+  const maybeBlueprint = isRecord(data.blueprint) ? data.blueprint : data;
+  if (!Array.isArray(maybeBlueprint.entities)) {
+    throw new Error('Expected a blueprint object with an entities array.');
+  }
+
+  return maybeBlueprint as unknown as FactorioBlueprint;
 }
 
-function normalizeExternalInputs(inputs) {
+function normalizeExternalInputs(inputs: ExternalInput[] | string): NormalizedExternalInput[] {
   if (typeof inputs === 'string') {
-    return normalizeExternalInputs(JSON.parse(inputs));
+    return normalizeExternalInputs(JSON.parse(inputs) as ExternalInput[]);
   }
   if (!Array.isArray(inputs)) {
     throw new Error('External inputs must be an array.');
@@ -90,9 +281,9 @@ function normalizeExternalInputs(inputs) {
   });
 }
 
-function buildModel(blueprint, externalInputs) {
-  const entities = new Map();
-  const ignoredEntities = [];
+function buildModel(blueprint: FactorioBlueprint, externalInputs: NormalizedExternalInput[]): SimulationModel {
+  const entities: EntityMap = new Map();
+  const ignoredEntities: IgnoredEntity[] = [];
 
   for (const entity of blueprint.entities) {
     const entityId = Number(entity.entity_number ?? entity.entityId ?? entity.id);
@@ -119,7 +310,7 @@ function buildModel(blueprint, externalInputs) {
   connectBlueprintWires(blueprint, entities, dsu);
 
   const networks = assignNetworks(entities, dsu);
-  const pointToNetwork = new Map();
+  const pointToNetwork = new Map<string, string>();
   for (const network of networks) {
     for (const point of network.points) {
       pointToNetwork.set(point.key, network.id);
@@ -140,23 +331,23 @@ function buildModel(blueprint, externalInputs) {
   };
 }
 
-function isSupportedEntity(entity) {
+function isSupportedEntity(entity: BlueprintEntity): boolean {
   const name = entity.name ?? '';
   return SUPPORTED_COMBINATORS.has(name) || isPowerPole(name);
 }
 
-function isPowerPole(name) {
+function isPowerPole(name: string): boolean {
   return name.endsWith('electric-pole') || name === 'substation';
 }
 
-function connectorIdsFor(entity) {
+function connectorIdsFor(entity: BlueprintEntity): number[] {
   if (entity.name === 'arithmetic-combinator' || entity.name === 'decider-combinator' || entity.name === 'selector-combinator') {
     return [1, 2];
   }
   return [1];
 }
 
-function connectEntityConnections(entities, dsu) {
+function connectEntityConnections(entities: EntityMap, dsu: DisjointSet): void {
   for (const entity of entities.values()) {
     const connections = entity.connections ?? {};
     for (const [connectorIdText, connectorConnections] of Object.entries(connections)) {
@@ -183,7 +374,7 @@ function connectEntityConnections(entities, dsu) {
   }
 }
 
-function connectBlueprintWires(blueprint, entities, dsu) {
+function connectBlueprintWires(blueprint: FactorioBlueprint, entities: EntityMap, dsu: DisjointSet): void {
   if (!Array.isArray(blueprint.wires)) {
     return;
   }
@@ -202,7 +393,15 @@ function connectBlueprintWires(blueprint, entities, dsu) {
   }
 }
 
-function unionWire(entities, dsu, firstEntity, firstConnector, secondEntity, secondConnector, wire) {
+function unionWire(
+  entities: EntityMap,
+  dsu: DisjointSet,
+  firstEntity: NumericInput,
+  firstConnector: NumericInput,
+  secondEntity: NumericInput,
+  secondConnector: NumericInput,
+  wire: WireColor
+): void {
   const firstId = Number(firstEntity);
   const secondId = Number(secondEntity);
   const firstConnectorId = Number(firstConnector);
@@ -216,7 +415,7 @@ function unionWire(entities, dsu, firstEntity, firstConnector, secondEntity, sec
   );
 }
 
-function normalizeWireColor(wire) {
+function normalizeWireColor(wire: unknown): WireColor | undefined {
   if (wire === 'red' || wire === 1) {
     return 'red';
   }
@@ -226,8 +425,8 @@ function normalizeWireColor(wire) {
   return undefined;
 }
 
-function assignNetworks(entities, dsu) {
-  const groupsByWire = new Map(WIRE_COLORS.map((wire) => [wire, new Map()]));
+function assignNetworks(entities: EntityMap, dsu: DisjointSet): NetworkModel[] {
+  const groupsByWire = new Map<WireColor, Map<string, NetworkPoint[]>>(WIRE_COLORS.map((wire) => [wire, new Map<string, NetworkPoint[]>()]));
 
   for (const entity of entities.values()) {
     const entityId = entityIdOf(entity);
@@ -236,10 +435,13 @@ function assignNetworks(entities, dsu) {
         const key = pointKey(entityId, connectorId, wire);
         const root = dsu.find(key);
         const groups = groupsByWire.get(wire);
+        if (!groups) {
+          continue;
+        }
         if (!groups.has(root)) {
           groups.set(root, []);
         }
-        groups.get(root).push({
+        groups.get(root)?.push({
           key,
           entityId,
           connectorId,
@@ -249,9 +451,9 @@ function assignNetworks(entities, dsu) {
     }
   }
 
-  const networks = [];
+  const networks: NetworkModel[] = [];
   for (const wire of WIRE_COLORS) {
-    const groups = [...groupsByWire.get(wire).values()]
+    const groups = [...(groupsByWire.get(wire)?.values() ?? [])]
       .map((points) => points.sort(comparePoints))
       .sort((left, right) => comparePoints(left[0], right[0]));
 
@@ -267,8 +469,8 @@ function assignNetworks(entities, dsu) {
   return networks;
 }
 
-function buildNetworkSignals(model, combinatorOutputs) {
-  const networkSignals = new Map(model.networks.map((network) => [network.id, new Map()]));
+function buildNetworkSignals(model: SimulationModel, combinatorOutputs: ReadonlyMap<number, ReadonlySignalBag>): Map<string, SignalBag> {
+  const networkSignals = new Map<string, SignalBag>(model.networks.map((network) => [network.id, new Map<SignalName, number>()]));
 
   for (const entity of model.constants) {
     const signals = readConstantSignals(entity);
@@ -290,11 +492,11 @@ function buildNetworkSignals(model, combinatorOutputs) {
   return networkSignals;
 }
 
-function computeNextCombinatorOutputs(model, networkSignals) {
-  const outputs = new Map();
+function computeNextCombinatorOutputs(model: SimulationModel, networkSignals: ReadonlyMap<string, ReadonlySignalBag>): Map<number, SignalBag> {
+  const outputs = new Map<number, SignalBag>();
   for (const entity of model.combinators) {
     const input = readCombinatorInput(model, networkSignals, entityIdOf(entity));
-    let signals = new Map();
+    let signals: SignalBag = new Map();
     if (entity.name === 'arithmetic-combinator') {
       signals = evaluateArithmetic(entity, input);
     } else if (entity.name === 'decider-combinator') {
@@ -307,17 +509,17 @@ function computeNextCombinatorOutputs(model, networkSignals) {
   return outputs;
 }
 
-function readCombinatorInput(model, networkSignals, entityId) {
-  const signals = new Map();
+function readCombinatorInput(model: SimulationModel, networkSignals: ReadonlyMap<string, ReadonlySignalBag>, entityId: number): SignalBag {
+  const signals: SignalBag = new Map();
   for (const wire of WIRE_COLORS) {
     const networkId = model.pointToNetwork.get(pointKey(entityId, 1, wire));
-    addSignalMaps(signals, networkSignals.get(networkId) ?? new Map());
+    addSignalMaps(signals, networkId ? networkSignals.get(networkId) ?? new Map() : new Map());
   }
   return signals;
 }
 
-function readConstantSignals(entity) {
-  const signals = new Map();
+function readConstantSignals(entity: BlueprintEntity): SignalBag {
+  const signals: SignalBag = new Map();
   const behavior = entity.control_behavior ?? {};
   for (const filter of collectConstantFilters(behavior)) {
     const signal = signalName(filter.signal);
@@ -329,13 +531,14 @@ function readConstantSignals(entity) {
   return signals;
 }
 
-function collectConstantFilters(behavior) {
-  const filters = [];
+function collectConstantFilters(behavior: Record<string, unknown>): ConstantFilter[] {
+  const filters: ConstantFilter[] = [];
   if (Array.isArray(behavior.filters)) {
-    filters.push(...behavior.filters);
+    filters.push(...(behavior.filters as ConstantFilter[]));
   }
-  if (Array.isArray(behavior.sections?.sections)) {
-    for (const section of behavior.sections.sections) {
+  const sections = behavior.sections;
+  if (isRecord(sections) && Array.isArray(sections.sections)) {
+    for (const section of sections.sections as ConstantSection[]) {
       if (Array.isArray(section.filters)) {
         filters.push(...section.filters);
       }
@@ -344,13 +547,14 @@ function collectConstantFilters(behavior) {
   return filters;
 }
 
-function evaluateArithmetic(entity, input) {
-  const config = entity.control_behavior?.arithmetic_conditions ?? entity.control_behavior?.arithmeticCondition ?? {};
+function evaluateArithmetic(entity: BlueprintEntity, input: ReadonlySignalBag): SignalBag {
+  const behavior = entity.control_behavior ?? {};
+  const config = (behavior.arithmetic_conditions ?? behavior.arithmeticCondition ?? {}) as ArithmeticConditions;
   const first = operandFrom(config.first_signal, config.first_constant);
   const second = operandFrom(config.second_signal, config.second_constant ?? config.constant);
   const operation = String(config.operation ?? '+').toUpperCase();
   const output = signalName(config.output_signal) ?? 'signal-each';
-  const outputSignals = new Map();
+  const outputSignals: SignalBag = new Map();
 
   if (first.kind === 'each' || second.kind === 'each' || output === 'signal-each') {
     for (const signal of [...input.keys()].sort()) {
@@ -369,9 +573,9 @@ function evaluateArithmetic(entity, input) {
   return outputSignals;
 }
 
-function evaluateDecider(entity, input) {
+function evaluateDecider(entity: BlueprintEntity, input: ReadonlySignalBag): SignalBag {
   const behavior = entity.control_behavior ?? {};
-  const config = behavior.decider_conditions ?? behavior.deciderCondition ?? behavior.conditions ?? {};
+  const config = (behavior.decider_conditions ?? behavior.deciderCondition ?? behavior.conditions ?? {}) as DeciderConditions;
   const conditions = Array.isArray(config.conditions) ? config.conditions : [config];
   const outputs = Array.isArray(config.outputs) ? config.outputs : [{
     signal: config.output_signal,
@@ -393,8 +597,14 @@ function evaluateDecider(entity, input) {
   return emitDeciderOutputs(input, outputs);
 }
 
-function evaluateEachDecider(input, first, second, comparator, outputs) {
-  const result = new Map();
+function evaluateEachDecider(
+  input: ReadonlySignalBag,
+  first: Operand,
+  second: Operand,
+  comparator: string,
+  outputs: DeciderOutputSpec[]
+): SignalBag {
+  const result: SignalBag = new Map();
   for (const signal of [...input.keys()].sort()) {
     if (!compareValues(operandValue(first, input, signal), comparator, operandValue(second, input, signal))) {
       continue;
@@ -408,7 +618,7 @@ function evaluateEachDecider(input, first, second, comparator, outputs) {
   return result;
 }
 
-function evaluateCondition(first, second, comparator, input) {
+function evaluateCondition(first: Operand, second: Operand, comparator: string, input: ReadonlySignalBag): boolean {
   if (first.kind === 'anything') {
     return [...input.keys()].some((signal) => compareValues(getSignal(input, signal), comparator, operandValue(second, input, signal)));
   }
@@ -419,8 +629,8 @@ function evaluateCondition(first, second, comparator, input) {
   return compareValues(operandValue(first, input), comparator, operandValue(second, input));
 }
 
-function emitDeciderOutputs(input, outputs) {
-  const result = new Map();
+function emitDeciderOutputs(input: ReadonlySignalBag, outputs: DeciderOutputSpec[]): SignalBag {
+  const result: SignalBag = new Map();
   for (const output of outputs) {
     const outputSignal = signalName(output.signal ?? output.output_signal);
     if (!outputSignal) {
@@ -438,9 +648,9 @@ function emitDeciderOutputs(input, outputs) {
   return result;
 }
 
-function evaluateSelector(entity, input) {
+function evaluateSelector(entity: BlueprintEntity, input: ReadonlySignalBag): SignalBag {
   const behavior = entity.control_behavior ?? {};
-  const config = behavior.selector_conditions ?? behavior.selectorCondition ?? {};
+  const config = (behavior.selector_conditions ?? behavior.selectorCondition ?? {}) as SelectorConditions;
   const operation = String(config.operation ?? config.select_operation ?? config.mode ?? 'select').toLowerCase();
   if (!operation.includes('select')) {
     return new Map();
@@ -454,7 +664,7 @@ function evaluateSelector(entity, input) {
   return selected ? new Map([selected]) : new Map();
 }
 
-function compareSelectorSignals(left, right, sortMode) {
+function compareSelectorSignals(left: [SignalName, number], right: [SignalName, number], sortMode: string): number {
   const [leftSignal, leftValue] = left;
   const [rightSignal, rightValue] = right;
   if (sortMode === 'count-asc' || sortMode === 'ascending') {
@@ -469,7 +679,7 @@ function compareSelectorSignals(left, right, sortMode) {
   return rightValue - leftValue || leftSignal.localeCompare(rightSignal);
 }
 
-function operandFrom(signal, constant) {
+function operandFrom(signal: SignalRef | string | undefined, constant: number | undefined): Operand {
   const name = signalName(signal);
   if (name === 'signal-each') {
     return { kind: 'each' };
@@ -486,17 +696,20 @@ function operandFrom(signal, constant) {
   return { kind: 'constant', value: Number(constant ?? 0) };
 }
 
-function operandValue(operand, signals, eachSignal = undefined) {
+function operandValue(operand: Operand, signals: ReadonlySignalBag, eachSignal?: SignalName): number {
   if (operand.kind === 'constant') {
     return operand.value;
   }
   if (operand.kind === 'each') {
-    return getSignal(signals, eachSignal);
+    return eachSignal ? getSignal(signals, eachSignal) : 0;
   }
-  return getSignal(signals, operand.signal);
+  if (operand.kind === 'signal') {
+    return getSignal(signals, operand.signal);
+  }
+  return 0;
 }
 
-function applyArithmetic(operation, left, right) {
+function applyArithmetic(operation: string, left: number, right: number): number {
   const leftInt = toInt32(left);
   const rightInt = toInt32(right);
   switch (operation) {
@@ -527,7 +740,7 @@ function applyArithmetic(operation, left, right) {
   }
 }
 
-function normalizeComparator(comparator) {
+function normalizeComparator(comparator: string): string {
   if (comparator === '=') {
     return '==';
   }
@@ -543,7 +756,7 @@ function normalizeComparator(comparator) {
   return String(comparator);
 }
 
-function compareValues(left, comparator, right) {
+function compareValues(left: number, comparator: string, right: number): boolean {
   switch (comparator) {
     case '<':
       return left < right;
@@ -562,21 +775,31 @@ function compareValues(left, comparator, right) {
   }
 }
 
-function addSignalsToPoint(model, networkSignals, entityId, connectorId, wire, signals) {
+function addSignalsToPoint(
+  model: SimulationModel,
+  networkSignals: Map<string, SignalBag>,
+  entityId: number,
+  connectorId: number,
+  wire: WireColor,
+  signals: ReadonlySignalBag
+): void {
   const networkId = model.pointToNetwork.get(pointKey(entityId, connectorId, wire));
   if (!networkId) {
     return;
   }
-  addSignalMaps(networkSignals.get(networkId), signals);
+  const target = networkSignals.get(networkId);
+  if (target) {
+    addSignalMaps(target, signals);
+  }
 }
 
-function addSignalMaps(target, source) {
+function addSignalMaps(target: SignalBag, source: ReadonlySignalBag): void {
   for (const [signal, value] of source) {
     addSignal(target, signal, value);
   }
 }
 
-function addSignal(target, signal, value) {
+function addSignal(target: SignalBag, signal: SignalName, value: number): void {
   const next = toInt32((target.get(signal) ?? 0) + value);
   if (next === 0) {
     target.delete(signal);
@@ -585,12 +808,12 @@ function addSignal(target, signal, value) {
   }
 }
 
-function getSignal(signals, signal) {
+function getSignal(signals: ReadonlySignalBag, signal: SignalName): number {
   return signals.get(signal) ?? 0;
 }
 
-function normalizeSignalMap(signals) {
-  const result = new Map();
+function normalizeSignalMap(signals: SignalMap | ReadonlySignalBag): SignalBag {
+  const result: SignalBag = new Map();
   if (signals instanceof Map) {
     addSignalMaps(result, signals);
     return result;
@@ -601,7 +824,7 @@ function normalizeSignalMap(signals) {
   return result;
 }
 
-function signalName(signal) {
+function signalName(signal: SignalRef | string | undefined): SignalName | undefined {
   if (!signal) {
     return undefined;
   }
@@ -611,48 +834,55 @@ function signalName(signal) {
   return signal.name;
 }
 
-function formatNetworks(model, networkSignals) {
+function formatNetworks(model: SimulationModel, networkSignals: ReadonlyMap<string, ReadonlySignalBag>): NetworkOutput[] {
   return model.networks.map((network) => ({
     id: network.id,
     wire: network.wire,
     points: network.points.map(({ entityId, connectorId, entityName }) => ({ entityId, connectorId, entityName })),
-    signals: Object.fromEntries([...networkSignals.get(network.id).entries()].sort(([left], [right]) => left.localeCompare(right)))
+    signals: Object.fromEntries([...(networkSignals.get(network.id) ?? new Map()).entries()].sort(([left], [right]) => left.localeCompare(right)))
   }));
 }
 
-function comparePoints(left, right) {
+function comparePoints(left: NetworkPoint | undefined, right: NetworkPoint | undefined): number {
+  if (!left || !right) {
+    return left ? -1 : right ? 1 : 0;
+  }
   return left.entityId - right.entityId || left.connectorId - right.connectorId || left.entityName.localeCompare(right.entityName);
 }
 
-function entityIdOf(entity) {
+function entityIdOf(entity: BlueprintEntity): number {
   return Number(entity.entity_number ?? entity.entityId ?? entity.id);
 }
 
-function pointKey(entityId, connectorId, wire) {
+function pointKey(entityId: number, connectorId: number, wire: WireColor): string {
   return `${entityId}:${connectorId}:${wire}`;
 }
 
-function toInt32(value) {
+function toInt32(value: number): number {
   return Number(BigInt.asIntN(32, BigInt(Math.trunc(Number(value) || 0))));
 }
 
-function wrapInt32(value) {
+function wrapInt32(value: bigint): number {
   return Number(BigInt.asIntN(32, value));
 }
 
-class DisjointSet {
-  #parents = new Map();
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
 
-  add(value) {
+class DisjointSet {
+  readonly #parents = new Map<string, string>();
+
+  add(value: string): void {
     if (!this.#parents.has(value)) {
       this.#parents.set(value, value);
     }
   }
 
-  find(value) {
+  find(value: string): string {
     this.add(value);
     const parent = this.#parents.get(value);
-    if (parent === value) {
+    if (!parent || parent === value) {
       return value;
     }
     const root = this.find(parent);
@@ -660,7 +890,7 @@ class DisjointSet {
     return root;
   }
 
-  union(left, right) {
+  union(left: string, right: string): void {
     const leftRoot = this.find(left);
     const rightRoot = this.find(right);
     if (leftRoot !== rightRoot) {
