@@ -91,6 +91,82 @@ test('decider combinator honors condition and output network selections', () => 
   assert.deepEqual(signalsOn(result, 1, 'red', 1, 2), { 'signal-B': 3 });
 });
 
+test('decider non-each condition does not allow each output pass-through', () => {
+  const result = simulateBlueprint({
+    item: 'blueprint',
+    entities: [
+      {
+        entity_number: 1,
+        name: 'decider-combinator',
+        position: { x: 0, y: 0 },
+        control_behavior: {
+          decider_conditions: {
+            conditions: [
+              {
+                first_signal: { type: 'virtual', name: 'signal-A' },
+                comparator: '>',
+                constant: 0
+              }
+            ],
+            outputs: [
+              {
+                signal: { type: 'virtual', name: 'signal-each' },
+                copy_count_from_input: true,
+                networks: { red: true, green: false }
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }, {
+    ticks: 2,
+    inputs: [
+      { entityId: 1, connectorId: 1, wire: 'red', signals: { 'signal-A': 5, 'signal-B': 2 } }
+    ]
+  });
+
+  assert.deepEqual(signalsOn(result, 1, 'red', 1, 2), {});
+});
+
+test('decider non-each condition allows every output pass-through', () => {
+  const result = simulateBlueprint({
+    item: 'blueprint',
+    entities: [
+      {
+        entity_number: 1,
+        name: 'decider-combinator',
+        position: { x: 0, y: 0 },
+        control_behavior: {
+          decider_conditions: {
+            conditions: [
+              {
+                first_signal: { type: 'virtual', name: 'signal-A' },
+                comparator: '>',
+                constant: 0
+              }
+            ],
+            outputs: [
+              {
+                signal: { type: 'virtual', name: 'signal-everything' },
+                copy_count_from_input: true,
+                networks: { red: true, green: false }
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }, {
+    ticks: 2,
+    inputs: [
+      { entityId: 1, connectorId: 1, wire: 'red', signals: { 'signal-A': 5, 'signal-B': 2 } }
+    ]
+  });
+
+  assert.deepEqual(signalsOn(result, 1, 'red', 1, 2), { 'signal-A': 5, 'signal-B': 2 });
+});
+
 test('selector combinator select-signal emits the selected signal', async () => {
   const blueprint = await loadExample('selector.json');
   const result = simulateBlueprint(blueprint, { ticks: 2 });

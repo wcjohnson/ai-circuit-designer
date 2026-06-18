@@ -87,6 +87,9 @@ Assumption policy:
 
 - If behavior is pure arithmetic with no branch: prefer one arithmetic combinator.
 - If behavior depends on thresholds/comparators: include decider.
+- Decider output semantics:
+  - Use `every = input [R|G|RG]` when the intent is to forward all incoming signals from a selected wire set.
+  - Do not use `each = input ...` unless the decider condition semantics are explicitly each-based on the LHS.
 - If ranking/indexing/counting/filtering/quality behavior is requested: selector.
 - If request is ambiguous about tick timing:
   - Default assertions to first tick where outputs are observable.

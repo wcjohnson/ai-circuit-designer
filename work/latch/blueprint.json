@@ -66,7 +66,7 @@
               {
                 "signal": {
                   "type": "virtual",
-                  "name": "signal-each"
+                  "name": "signal-everything"
                 },
                 "copy_count_from_input": true,
                 "networks": {
@@ -118,7 +118,7 @@
               {
                 "signal": {
                   "type": "virtual",
-                  "name": "signal-each"
+                  "name": "signal-everything"
                 },
                 "copy_count_from_input": true,
                 "networks": {

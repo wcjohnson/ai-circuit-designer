@@ -7,13 +7,13 @@ combinators:
       "signal-R" G = 0
       AND anything R != 0
     outputs:
-      each = input R
+      every = input R
   HOLD: decider
     conditions:
       "signal-R" G = 0
       AND anything R != 0
     outputs:
-      each = input R
+      every = input R
 
 wires:
   network Signals: red
@@ -70,3 +70,18 @@ tests:
       assert signal "signal-A" = 0 on network Latch
       assert signal "signal-B" = 0 on network Latch
       assert signal "signal-C" = 0 on network Latch
+
+  known-bug-continuous-input-accumulates:
+    tick 0:
+      apply signal "signal-A" = 5 to network Signals
+    tick 1:
+      apply signal "signal-A" = 5 to network Signals
+      assert signal "signal-A" = 5 on network Latch
+    tick 2:
+      apply signal "signal-A" = 5 to network Signals
+      assert signal "signal-A" = 10 on network Latch
+    tick 3:
+      apply signal "signal-A" = 5 to network Signals
+      assert signal "signal-A" = 15 on network Latch
+    tick 4:
+      assert signal "signal-A" = 20 on network Latch

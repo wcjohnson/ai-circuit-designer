@@ -682,7 +682,7 @@ function evaluateEachDecider(
     for (const output of outputs) {
       const outputSignal = signalName(output.signal) ?? 'signal-each';
       const value = output.copy_count_from_input === false ? output.constant ?? 1 : getSignal(selectCircuitNetworks(inputs, output.networks), signal);
-      addSignal(result, outputSignal === 'signal-each' ? signal : outputSignal, value);
+      addSignal(result, isEachLikeOutputSignal(outputSignal) ? signal : outputSignal, value);
     }
   }
   return result;
@@ -706,8 +706,12 @@ function emitDeciderOutputs(inputs: CombinatorWireInputs, outputs: DeciderOutput
     if (!outputSignal) {
       continue;
     }
-    if (outputSignal === 'signal-each') {
+    if (isEverythingOutputSignal(outputSignal)) {
       addSignalMaps(result, selectCircuitNetworks(inputs, output.networks));
+      continue;
+    }
+    if (isEachOutputSignal(outputSignal)) {
+      // In non-each deciders, `each` output is not valid and should not emit pass-through signals.
       continue;
     }
     const value = output.copy_count_from_input === false
@@ -718,6 +722,18 @@ function emitDeciderOutputs(inputs: CombinatorWireInputs, outputs: DeciderOutput
     }
   }
   return result;
+}
+
+function isEachOutputSignal(signal: string): boolean {
+  return signal === 'signal-each';
+}
+
+function isEverythingOutputSignal(signal: string): boolean {
+  return signal === 'signal-everything' || signal === 'signal-every';
+}
+
+function isEachLikeOutputSignal(signal: string): boolean {
+  return isEachOutputSignal(signal) || isEverythingOutputSignal(signal);
 }
 
 function evaluateSelector(entity: BlueprintEntity, input: ReadonlySignalBag): SignalBag {
