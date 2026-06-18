@@ -7,16 +7,18 @@ export type BlueprintString = `${typeof BLUEPRINT_STRING_VERSION}${string}`;
 export type WireColor = typeof WIRE_COLORS[number];
 export type SignalName = string;
 export type SignalMap = Record<SignalName, number>;
-export type SignalType = 'item' | 'fluid' | 'virtual' | 'recipe' | 'entity' | 'space-location' | 'asteroid-chunk' | 'quality' | string;
+export type SignalIDType = 'item' | 'fluid' | 'virtual' | 'recipe' | 'entity' | 'space-location' | 'asteroid-chunk' | 'quality' | string;
+export type ComparatorString = '<' | '>' | '=' | '==' | '!=' | '<=' | '>=' | '≤' | '≥' | '≠' | string;
 
 export interface Position {
   x: number;
   y: number;
 }
 
-export interface SignalRef {
-  type?: SignalType;
-  name: SignalName;
+export interface SignalID {
+  type?: SignalIDType;
+  name?: SignalName;
+  quality?: string;
 }
 
 export interface CircuitNetworkSelection {
@@ -66,24 +68,34 @@ export interface PowerPoleEntity extends BaseBlueprintEntity {
   name: PowerPoleName;
 }
 
-export interface ConstantFilter {
-  index?: number;
-  signal?: SignalRef | string;
-  count?: number;
+export interface BlueprintLogisticFilter {
+  index: number;
+  type?: SignalIDType;
+  name?: string;
+  quality?: string;
+  comparator?: ComparatorString;
+  count: number;
+  max_count?: number;
+  minimum_delivery_count?: number;
+  import_from?: string;
 }
 
 export interface ConstantSection {
-  filters?: ConstantFilter[];
-  [key: string]: unknown;
+  index: number;
+  filters?: BlueprintLogisticFilter[];
+  group?: string;
+  multiplier?: number;
+  active?: boolean;
+}
+
+export interface LogisticSections {
+  sections?: ConstantSection[];
+  trash_not_requested?: boolean;
 }
 
 export interface ConstantControlBehavior {
-  filters?: ConstantFilter[];
-  sections?: {
-    sections?: ConstantSection[];
-    [key: string]: unknown;
-  };
-  [key: string]: unknown;
+  sections: LogisticSections;
+  is_on?: boolean;
 }
 
 export interface ConstantCombinatorEntity extends BaseBlueprintEntity {
@@ -93,15 +105,15 @@ export interface ConstantCombinatorEntity extends BaseBlueprintEntity {
 }
 
 export interface ArithmeticConditions {
-  first_signal?: SignalRef | string;
+  first_signal?: SignalID;
   first_signal_networks?: CircuitNetworkSelection;
   first_constant?: number;
-  second_signal?: SignalRef | string;
+  second_signal?: SignalID;
   second_signal_networks?: CircuitNetworkSelection;
   second_constant?: number;
   constant?: number;
   operation?: '+' | '-' | '*' | '/' | '%' | '^' | '<<' | '>>' | 'AND' | 'OR' | 'XOR' | string;
-  output_signal?: SignalRef | string;
+  output_signal?: SignalID;
 }
 
 export interface ArithmeticControlBehavior {
@@ -115,17 +127,17 @@ export interface ArithmeticCombinatorEntity extends BaseBlueprintEntity {
 }
 
 export interface DeciderCondition {
-  first_signal?: SignalRef | string;
+  first_signal?: SignalID;
   first_signal_networks?: CircuitNetworkSelection;
-  second_signal?: SignalRef | string;
+  second_signal?: SignalID;
   second_signal_networks?: CircuitNetworkSelection;
   constant?: number;
-  comparator?: '<' | '>' | '=' | '==' | '!=' | '<=' | '>=' | '≤' | '≥' | '≠' | string;
+  comparator?: ComparatorString;
   compare_type?: 'and' | 'or';
 }
 
 export interface DeciderOutputSpec {
-  signal: SignalRef | string;
+  signal: SignalID;
   copy_count_from_input?: boolean;
   constant?: number;
   networks?: CircuitNetworkSelection;

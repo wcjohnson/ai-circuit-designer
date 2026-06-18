@@ -121,15 +121,33 @@ const invalidDeciderOutputAlias: DeciderControlBehavior = {
 };
 void invalidDeciderOutputAlias;
 
+const invalidConstantControlBehaviorLegacyFilters: ConstantCombinatorEntity = {
+  entity_number: 99,
+  name: 'constant-combinator',
+  position: { x: 0, y: 0 },
+  control_behavior: {
+    // @ts-expect-error Factorio 2.0 constant combinators use sections, not top-level filters.
+    filters: []
+  }
+};
+void invalidConstantControlBehaviorLegacyFilters;
+
 function generatedNetworkBlueprint(): FactorioBlueprint {
   const constant: ConstantCombinatorEntity = {
     entity_number: 1,
     name: 'constant-combinator',
     position: { x: 0, y: 0 },
     control_behavior: {
-      filters: [
-        { index: 1, signal: { type: 'virtual', name: 'signal-A' }, count: 2 }
-      ]
+      sections: {
+        sections: [
+          {
+            index: 1,
+            filters: [
+              { index: 1, type: 'virtual', name: 'signal-A', count: 2 }
+            ]
+          }
+        ]
+      }
     },
     wires: [[1, WIRE_CONNECTOR_ID.circuitRed, 2, WIRE_CONNECTOR_ID.circuitRed]]
   };
@@ -199,9 +217,16 @@ test('entity wire arrays round-trip through JSON and compressed strings', () => 
     name: 'constant-combinator',
     position: { x: 0, y: 0 },
     control_behavior: {
-      filters: [
-        { index: 1, signal: { type: 'virtual', name: 'signal-A' }, count: 4 }
-      ]
+      sections: {
+        sections: [
+          {
+            index: 1,
+            filters: [
+              { index: 1, type: 'virtual', name: 'signal-A', count: 4 }
+            ]
+          }
+        ]
+      }
     },
     wires: [[1, WIRE_CONNECTOR_ID.circuitRed, 2, WIRE_CONNECTOR_ID.combinatorInputRed]]
   };

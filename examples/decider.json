@@ -8,9 +8,16 @@
         "name": "constant-combinator",
         "position": { "x": 0, "y": 0 },
         "control_behavior": {
-          "filters": [
-            { "index": 1, "signal": { "type": "virtual", "name": "signal-A" }, "count": 8 }
-          ]
+          "sections": {
+            "sections": [
+              {
+                "index": 1,
+                "filters": [
+                  { "index": 1, "type": "virtual", "name": "signal-A", "count": 8 }
+                ]
+              }
+            ]
+          }
         },
         "wires": [ [ 1, 1, 2, 3 ] ]
       },

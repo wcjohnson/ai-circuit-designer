@@ -1,5 +1,5 @@
 import { WIRE_COLORS, WIRE_CONNECTOR_ID, readBlueprint } from './blueprint.js';
-import type { BlueprintEntity, BlueprintInput, CircuitNetworkSelection, FactorioBlueprint, SignalMap, SignalName, SignalRef, WireColor, WireConnectorId } from './blueprint.js';
+import type { BlueprintEntity, BlueprintInput, CircuitNetworkSelection, FactorioBlueprint, SignalID, SignalMap, SignalName, WireColor, WireConnectorId } from './blueprint.js';
 
 export {
   createBlueprint,
@@ -26,7 +26,7 @@ export type {
   CircuitNetworkSelection,
   CombinatorEntity,
   ConstantCombinatorEntity,
-  ConstantFilter,
+  BlueprintLogisticFilter,
   DeciderCombinatorEntity,
   DeciderCondition,
   DeciderOutputSpec,
@@ -35,9 +35,9 @@ export type {
   PowerPoleName,
   SelectorCombinatorEntity,
   SelectorConditions,
+  SignalID,
   SignalMap,
   SignalName,
-  SignalRef,
   SupportedBlueprintEntity,
   Tags,
   UnknownBlueprintEntity,
@@ -133,31 +133,37 @@ interface SimulationModel {
   ignoredEntities: IgnoredEntity[];
 }
 
-interface ConstantFilter {
-  signal?: SignalRef | string;
+interface BlueprintLogisticFilter {
+  type?: string;
+  name?: string;
+  quality?: string;
   count?: number;
 }
 
 interface ConstantSection {
-  filters?: ConstantFilter[];
+  filters?: BlueprintLogisticFilter[];
+}
+
+interface LogisticSections {
+  sections?: ConstantSection[];
 }
 
 interface ArithmeticConditions {
-  first_signal?: SignalRef | string;
+  first_signal?: SignalID;
   first_signal_networks?: CircuitNetworkSelection;
   first_constant?: number;
-  second_signal?: SignalRef | string;
+  second_signal?: SignalID;
   second_signal_networks?: CircuitNetworkSelection;
   second_constant?: number;
   constant?: number;
   operation?: string;
-  output_signal?: SignalRef | string;
+  output_signal?: SignalID;
 }
 
 interface DeciderCondition {
-  first_signal?: SignalRef | string;
+  first_signal?: SignalID;
   first_signal_networks?: CircuitNetworkSelection;
-  second_signal?: SignalRef | string;
+  second_signal?: SignalID;
   second_signal_networks?: CircuitNetworkSelection;
   constant?: number;
   comparator?: string;
@@ -165,7 +171,7 @@ interface DeciderCondition {
 }
 
 interface DeciderOutputSpec {
-  signal: SignalRef | string;
+  signal: SignalID;
   copy_count_from_input?: boolean;
   constant?: number;
   networks?: CircuitNetworkSelection;
@@ -480,8 +486,11 @@ function readCombinatorWireInput(model: SimulationModel, networkSignals: Readonl
 function readConstantSignals(entity: BlueprintEntity): SignalBag {
   const signals: SignalBag = new Map();
   const behavior = (entity.control_behavior ?? {}) as Record<string, unknown>;
+  if (behavior.is_on === false) {
+    return signals;
+  }
   for (const filter of collectConstantFilters(behavior)) {
-    const signal = signalName(filter.signal);
+    const signal = signalName({ type: filter.type, name: filter.name, quality: filter.quality });
     const count = Number(filter.count ?? 0);
     if (signal && count !== 0) {
       addSignal(signals, signal, count);
@@ -490,14 +499,11 @@ function readConstantSignals(entity: BlueprintEntity): SignalBag {
   return signals;
 }
 
-function collectConstantFilters(behavior: Record<string, unknown>): ConstantFilter[] {
-  const filters: ConstantFilter[] = [];
-  if (Array.isArray(behavior.filters)) {
-    filters.push(...(behavior.filters as ConstantFilter[]));
-  }
+function collectConstantFilters(behavior: Record<string, unknown>): BlueprintLogisticFilter[] {
+  const filters: BlueprintLogisticFilter[] = [];
   const sections = behavior.sections;
-  if (isRecord(sections) && Array.isArray(sections.sections)) {
-    for (const section of sections.sections as ConstantSection[]) {
+  if (isRecord(sections) && Array.isArray((sections as LogisticSections).sections)) {
+    for (const section of (sections as LogisticSections).sections ?? []) {
       if (Array.isArray(section.filters)) {
         filters.push(...section.filters);
       }
@@ -685,7 +691,7 @@ function compareSelectorSignals(left: [SignalName, number], right: [SignalName, 
   return rightValue - leftValue || leftSignal.localeCompare(rightSignal);
 }
 
-function operandFrom(signal: SignalRef | string | undefined, constant: number | undefined): Operand {
+function operandFrom(signal: SignalID | undefined, constant: number | undefined): Operand {
   const name = signalName(signal);
   if (name === 'signal-each') {
     return { kind: 'each' };
@@ -830,12 +836,9 @@ function normalizeSignalMap(signals: SignalMap | ReadonlySignalBag): SignalBag {
   return result;
 }
 
-function signalName(signal: SignalRef | string | undefined): SignalName | undefined {
+function signalName(signal: SignalID | undefined): SignalName | undefined {
   if (!signal) {
     return undefined;
-  }
-  if (typeof signal === 'string') {
-    return signal;
   }
   return signal.name;
 }
