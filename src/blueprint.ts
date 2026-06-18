@@ -29,13 +29,13 @@ export interface CircuitNetworkSelection {
 export const WIRE_CONNECTOR_ID = {
   circuitRed: 1,
   circuitGreen: 2,
-  combinatorInputRed: 3,
-  combinatorInputGreen: 4,
-  combinatorOutputRed: 5,
-  combinatorOutputGreen: 6,
-  poleCopper: 7,
-  powerSwitchLeftCopper: 8,
-  powerSwitchRightCopper: 9
+  combinatorInputRed: 1,
+  combinatorInputGreen: 2,
+  combinatorOutputRed: 3,
+  combinatorOutputGreen: 4,
+  poleCopper: 5,
+  powerSwitchLeftCopper: 5,
+  powerSwitchRightCopper: 6
 } as const;
 
 export type WireConnectorId = typeof WIRE_CONNECTOR_ID[keyof typeof WIRE_CONNECTOR_ID];
@@ -328,6 +328,19 @@ export function normalizeBlueprintDocument(data: unknown): FactorioBlueprint {
 
   const normalized = { ...data } as Record<string, unknown>;
   const mergedWires = mergeBlueprintWires(normalized);
+
+  const normalizedEntities = normalized.entities;
+  if (Array.isArray(normalizedEntities)) {
+    normalized.entities = normalizedEntities.map((entity) => {
+      if (!isRecord(entity)) {
+        return entity;
+      }
+      const withoutEntityWires = { ...entity };
+      delete withoutEntityWires.wires;
+      return withoutEntityWires;
+    });
+  }
+
   if (mergedWires.length > 0 || 'wires' in normalized) {
     normalized.wires = mergedWires;
   }

@@ -266,7 +266,7 @@ test('global wire arrays round-trip through JSON and compressed strings', () => 
 
   const blueprintString = writeBlueprintString(blueprint);
 
-  assert.deepEqual(readBlueprintString(blueprintString).wires, [[1, 1, 2, 3]]);
+  assert.deepEqual(readBlueprintString(blueprintString).wires, [[1, 1, 2, 1]]);
   assert.deepEqual(readBlueprint(writeBlueprintJson(blueprint)), normalized);
 });
 
@@ -301,6 +301,42 @@ test('accepts global blueprint wires and dedupes them', () => {
       [1, WIRE_CONNECTOR_ID.circuitGreen, 2, WIRE_CONNECTOR_ID.combinatorInputGreen]
     ]
   });
+
+  assert.equal('wires' in normalized.entities[0], false);
+  assert.equal('wires' in normalized.entities[1], false);
+});
+
+test('normalizes mixed entity wires into top-level wires only', () => {
+  const normalized = readBlueprint({
+    item: 'blueprint',
+    entities: [
+      {
+        entity_number: 1,
+        name: 'constant-combinator',
+        position: { x: 0, y: 0 },
+        wires: [
+          [1, WIRE_CONNECTOR_ID.circuitRed, 2, WIRE_CONNECTOR_ID.combinatorInputRed],
+          [1, WIRE_CONNECTOR_ID.circuitRed, 2, WIRE_CONNECTOR_ID.combinatorInputRed]
+        ]
+      },
+      {
+        entity_number: 2,
+        name: 'arithmetic-combinator',
+        position: { x: 1, y: 0 }
+      }
+    ],
+    wires: [
+      [1, WIRE_CONNECTOR_ID.circuitRed, 2, WIRE_CONNECTOR_ID.combinatorInputRed],
+      [1, WIRE_CONNECTOR_ID.circuitGreen, 2, WIRE_CONNECTOR_ID.combinatorInputGreen]
+    ]
+  });
+
+  assert.deepEqual(normalized.wires, [
+    [1, WIRE_CONNECTOR_ID.circuitRed, 2, WIRE_CONNECTOR_ID.combinatorInputRed],
+    [1, WIRE_CONNECTOR_ID.circuitGreen, 2, WIRE_CONNECTOR_ID.combinatorInputGreen]
+  ]);
+  assert.equal('wires' in normalized.entities[0], false);
+  assert.equal('wires' in normalized.entities[1], false);
 
   assert.deepEqual(normalized.wires, [
     [1, WIRE_CONNECTOR_ID.circuitRed, 2, WIRE_CONNECTOR_ID.combinatorInputRed],

@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { stdin as inputStream } from 'node:process';
 import { inflateSync } from 'node:zlib';
 import { simulateBlueprint } from './simulator.js';
 import type { ExternalInput } from './simulator.js';
 import { compileDsl, runDslTests } from './dsl.js';
+import { writeBlueprintJson, writeBlueprintString } from './blueprint.js';
 
 type Command = 'simulate' | 'compile' | 'test' | 'dump';
 
@@ -26,6 +27,8 @@ interface CompileOptions extends BaseCliOptions {
   command: 'compile';
   dslPath?: string;
   includeBlueprintString: boolean;
+  outputBlueprintJsonPath?: string;
+  outputBlueprintStringPath?: string;
 }
 
 interface TestOptions extends BaseCliOptions {
@@ -72,9 +75,21 @@ try {
 
   const dslSource = await readDslSource(options.dslPath);
   if (options.command === 'compile') {
+    const includeBlueprintString = options.includeBlueprintString || Boolean(options.outputBlueprintStringPath);
     const result = compileDsl(dslSource, {
-      includeBlueprintString: options.includeBlueprintString
+      includeBlueprintString
     });
+
+    if (options.outputBlueprintJsonPath) {
+      const blueprintJson = writeBlueprintJson(result.blueprint, { pretty: options.pretty });
+      await writeFile(options.outputBlueprintJsonPath, blueprintJson, 'utf8');
+    }
+
+    if (options.outputBlueprintStringPath) {
+      const blueprintString = result.blueprintString ?? writeBlueprintString(result.blueprint);
+      await writeFile(options.outputBlueprintStringPath, blueprintString, 'utf8');
+    }
+
     printJson(result, options.pretty);
     process.exit(0);
   }
@@ -172,6 +187,14 @@ function parseCompileArgs(args: string[]): CompileOptions {
         break;
       case '--with-blueprint-string':
         options.includeBlueprintString = true;
+        break;
+      case '--out-blueprint-json':
+      case '--out-json':
+        options.outputBlueprintJsonPath = readValue(args, ++index, arg);
+        break;
+      case '--out-blueprint-string':
+      case '--out-string':
+        options.outputBlueprintStringPath = readValue(args, ++index, arg);
         break;
       case '--pretty':
         options.pretty = true;
@@ -330,6 +353,8 @@ function printHelp(): void {
       'compile options:',
       '  -d, --dsl <path>             Read DSL source file (or stdin when omitted)',
       '      --with-blueprint-string  Include encoded blueprint string in output',
+      '      --out-json <path>        Write compiled blueprint JSON to a file',
+      '      --out-string <path>      Write compiled blueprint string to a file',
       '',
       'test options:',
       '  -d, --dsl <path>       Read DSL source file (or stdin when omitted)',
