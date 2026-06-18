@@ -19,6 +19,7 @@ import type {
   DeciderControlBehavior,
   FactorioBlueprint,
   PowerPoleEntity,
+  SelectorCombinatorParameters,
   SelectorCombinatorEntity
 } from '../src/blueprint.js';
 
@@ -120,6 +121,20 @@ const invalidDeciderOutputAlias: DeciderControlBehavior = {
   }
 };
 void invalidDeciderOutputAlias;
+
+const validSelectorControlBehavior: SelectorCombinatorParameters = {
+  operation: 'quality-transfer',
+  select_quality_from_signal: true,
+  quality_source_signal: { type: 'item', name: 'iron-plate' },
+  quality_destination_signal: { type: 'item', name: 'copper-plate' }
+};
+void validSelectorControlBehavior;
+
+const invalidSelectorConditionsAlias: SelectorCombinatorParameters = {
+  // @ts-expect-error Selector combinator uses a single parameter object, not selector_conditions.
+  selector_conditions: {}
+};
+void invalidSelectorConditionsAlias;
 
 const invalidConstantControlBehaviorLegacyFilters: ConstantCombinatorEntity = {
   entity_number: 99,
@@ -235,7 +250,9 @@ test('entity wire arrays round-trip through JSON and compressed strings', () => 
     name: 'selector-combinator',
     position: { x: 2, y: 0 },
     control_behavior: {
-      selector_conditions: { operation: 'select', index: 1, sort: 'count-desc' }
+      operation: 'select',
+      select_max: true,
+      index_constant: 0
     }
   };
   const blueprint = createBlueprint([constant, selector], {

@@ -27,11 +27,9 @@
         "name": "selector-combinator",
         "position": { "x": 2, "y": 0 },
         "control_behavior": {
-          "selector_conditions": {
-            "operation": "select",
-            "index": 1,
-            "sort": "count-desc"
-          }
+          "operation": "select",
+          "select_max": true,
+          "index_constant": 0
         }
       }
     ]

@@ -158,27 +158,45 @@ export interface DeciderCombinatorEntity extends BaseBlueprintEntity {
   control_behavior?: DeciderControlBehavior;
 }
 
-export interface SelectorConditions {
-  operation?: 'select' | 'select-signal' | string;
-  select_operation?: string;
-  mode?: string;
-  index?: number;
-  select_signal_index?: number;
-  constant?: number;
-  sort?: 'count-desc' | 'count-asc' | 'name-asc' | 'name-desc' | string;
-  sort_mode?: string;
+export interface QualityConditionObject {
+  quality?: string;
+  comparator?: ComparatorString;
 }
 
-export interface SelectorControlBehavior {
-  selector_conditions?: SelectorConditions;
-  selectorCondition?: SelectorConditions;
-  [key: string]: unknown;
+export type QualityCondition = string | QualityConditionObject;
+
+export interface SignalIDBase {
+  type?: SignalIDType;
+  name?: string;
+}
+
+export type SelectorCombinatorParameterOperation =
+  | 'select'
+  | 'count'
+  | 'random'
+  | 'quality-transfer'
+  | 'rocket-capacity'
+  | 'stack-size'
+  | 'quality-filter';
+
+export interface SelectorCombinatorParameters {
+  operation?: SelectorCombinatorParameterOperation;
+  select_max?: boolean;
+  index_signal?: SignalID;
+  index_constant?: number;
+  count_signal?: SignalID;
+  random_update_interval?: number;
+  quality_filter?: QualityCondition;
+  select_quality_from_signal?: boolean;
+  quality_source_static?: string;
+  quality_source_signal?: SignalIDBase;
+  quality_destination_signal?: SignalID;
 }
 
 export interface SelectorCombinatorEntity extends BaseBlueprintEntity {
   name: 'selector-combinator';
   player_description?: string;
-  control_behavior?: SelectorControlBehavior;
+  control_behavior?: SelectorCombinatorParameters;
 }
 
 export type CombinatorEntity =

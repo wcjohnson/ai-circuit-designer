@@ -1,5 +1,18 @@
 import { WIRE_COLORS, WIRE_CONNECTOR_ID, readBlueprint } from './blueprint.js';
-import type { BlueprintEntity, BlueprintInput, CircuitNetworkSelection, FactorioBlueprint, SignalID, SignalMap, SignalName, WireColor, WireConnectorId } from './blueprint.js';
+import type {
+  BlueprintEntity,
+  BlueprintInput,
+  CircuitNetworkSelection,
+  ComparatorString,
+  FactorioBlueprint,
+  QualityCondition,
+  SelectorCombinatorParameters,
+  SignalID,
+  SignalMap,
+  SignalName,
+  WireColor,
+  WireConnectorId
+} from './blueprint.js';
 
 export {
   createBlueprint,
@@ -34,7 +47,7 @@ export type {
   PowerPoleEntity,
   PowerPoleName,
   SelectorCombinatorEntity,
-  SelectorConditions,
+  SelectorCombinatorParameters,
   SignalID,
   SignalMap,
   SignalName,
@@ -180,17 +193,6 @@ interface DeciderOutputSpec {
 interface DeciderConditions {
   conditions?: DeciderCondition[];
   outputs?: DeciderOutputSpec[];
-}
-
-interface SelectorConditions {
-  operation?: string;
-  select_operation?: string;
-  mode?: string;
-  index?: number;
-  select_signal_index?: number;
-  constant?: number;
-  sort?: string;
-  sort_mode?: string;
 }
 
 const SUPPORTED_COMBINATORS = new Set<string>([
@@ -661,34 +663,160 @@ function emitDeciderOutputs(inputs: CombinatorWireInputs, outputs: DeciderOutput
 }
 
 function evaluateSelector(entity: BlueprintEntity, input: ReadonlySignalBag): SignalBag {
-  const behavior = (entity.control_behavior ?? {}) as Record<string, unknown>;
-  const config = (behavior.selector_conditions ?? behavior.selectorCondition ?? {}) as SelectorConditions;
-  const operation = String(config.operation ?? config.select_operation ?? config.mode ?? 'select').toLowerCase();
-  if (!operation.includes('select')) {
-    return new Map();
+  const config = (entity.control_behavior ?? {}) as SelectorCombinatorParameters;
+  const operation = config.operation ?? 'select';
+
+  if (operation === 'select') {
+    return evaluateSelectorSelect(config, input);
+  }
+  if (operation === 'count') {
+    return evaluateSelectorCount(config, input);
+  }
+  if (operation === 'quality-filter') {
+    return evaluateSelectorQualityFilter(config, input);
+  }
+  if (operation === 'quality-transfer') {
+    return evaluateSelectorQualityTransfer(config, input);
   }
 
-  const index = Math.max(1, Number(config.index ?? config.select_signal_index ?? config.constant ?? 1));
-  const sortMode = String(config.sort ?? config.sort_mode ?? 'count-desc').toLowerCase();
+  // Unsupported selector operations are intentionally ignored by the simulator.
+  return new Map();
+}
+
+function evaluateSelectorSelect(config: SelectorCombinatorParameters, input: ReadonlySignalBag): SignalBag {
   const candidates = [...input.entries()].filter(([, value]) => value !== 0);
-  candidates.sort((left, right) => compareSelectorSignals(left, right, sortMode));
-  const selected = candidates[index - 1];
+  const selectMax = config.select_max ?? true;
+  candidates.sort((left, right) => compareSelectorSignals(left, right, selectMax));
+
+  const indexSignal = signalName(config.index_signal);
+  const index = Math.max(0, toInt32(indexSignal ? getSignal(input, indexSignal) : Number(config.index_constant ?? 0)));
+  const selected = candidates[index];
   return selected ? new Map([selected]) : new Map();
 }
 
-function compareSelectorSignals(left: [SignalName, number], right: [SignalName, number], sortMode: string): number {
+function evaluateSelectorCount(config: SelectorCombinatorParameters, input: ReadonlySignalBag): SignalBag {
+  const outputSignal = signalName(config.count_signal);
+  if (!outputSignal) {
+    return new Map();
+  }
+
+  const count = [...input.values()].filter((value) => value !== 0).length;
+  return count === 0 ? new Map() : new Map([[outputSignal, count]]);
+}
+
+function evaluateSelectorQualityFilter(config: SelectorCombinatorParameters, input: ReadonlySignalBag): SignalBag {
+  const condition = normalizeQualityCondition(config.quality_filter);
+  if (!condition) {
+    return new Map(input);
+  }
+
+  const result: SignalBag = new Map();
+  for (const [signal, value] of input.entries()) {
+    const quality = parseSignalKey(signal).quality;
+    if (qualityMatchesCondition(quality, condition.quality, condition.comparator)) {
+      result.set(signal, value);
+    }
+  }
+  return result;
+}
+
+function evaluateSelectorQualityTransfer(config: SelectorCombinatorParameters, input: ReadonlySignalBag): SignalBag {
+  const destination = config.quality_destination_signal;
+  if (!destination?.name) {
+    return new Map();
+  }
+
+  const selectedQuality = selectTransferQuality(config, input);
+  if (!selectedQuality) {
+    return new Map();
+  }
+
+  const destinationKey = makeSignalKey(destination.name, selectedQuality);
+  const sourceBaseName = config.quality_source_signal?.name;
+  const transferredValue = sourceBaseName
+    ? sumSignalValuesByNameAndQuality(input, sourceBaseName, selectedQuality)
+    : 1;
+  if (transferredValue === 0) {
+    return new Map();
+  }
+  return new Map([[destinationKey, transferredValue]]);
+}
+
+function compareSelectorSignals(left: [SignalName, number], right: [SignalName, number], selectMax: boolean): number {
   const [leftSignal, leftValue] = left;
   const [rightSignal, rightValue] = right;
-  if (sortMode === 'count-asc' || sortMode === 'ascending') {
+  if (!selectMax) {
     return leftValue - rightValue || leftSignal.localeCompare(rightSignal);
   }
-  if (sortMode === 'name-asc' || sortMode === 'signal-asc') {
-    return leftSignal.localeCompare(rightSignal);
-  }
-  if (sortMode === 'name-desc' || sortMode === 'signal-desc') {
-    return rightSignal.localeCompare(leftSignal);
-  }
   return rightValue - leftValue || leftSignal.localeCompare(rightSignal);
+}
+
+function normalizeQualityCondition(input: QualityCondition | undefined): { quality?: string; comparator: ComparatorString } | undefined {
+  if (input === undefined || input === null) {
+    return undefined;
+  }
+  if (typeof input === 'string') {
+    return { quality: input, comparator: '==' };
+  }
+  return {
+    quality: input.quality,
+    comparator: input.comparator ?? '=='
+  };
+}
+
+function qualityMatchesCondition(candidate: string | undefined, expected: string | undefined, comparator: ComparatorString): boolean {
+  if (!expected) {
+    return true;
+  }
+
+  const candidateRank = qualityRank(candidate);
+  const expectedRank = qualityRank(expected);
+  if (candidateRank === undefined || expectedRank === undefined) {
+    return normalizeComparator(comparator) === '==' ? candidate === expected : false;
+  }
+  return compareValues(candidateRank, normalizeComparator(comparator), expectedRank);
+}
+
+function selectTransferQuality(config: SelectorCombinatorParameters, input: ReadonlySignalBag): string | undefined {
+  if (config.select_quality_from_signal) {
+    const sourceName = config.quality_source_signal?.name;
+    if (!sourceName) {
+      return undefined;
+    }
+
+    let selected: { quality: string; value: number } | undefined;
+    for (const [signal, value] of input.entries()) {
+      const parsed = parseSignalKey(signal);
+      if (parsed.name !== sourceName || !parsed.quality) {
+        continue;
+      }
+      if (!selected || Math.abs(value) > Math.abs(selected.value)) {
+        selected = { quality: parsed.quality, value };
+      }
+    }
+    return selected?.quality;
+  }
+  return config.quality_source_static;
+}
+
+function sumSignalValuesByNameAndQuality(input: ReadonlySignalBag, name: string, quality: string): number {
+  let total = 0;
+  for (const [signal, value] of input.entries()) {
+    const parsed = parseSignalKey(signal);
+    if (parsed.name === name && parsed.quality === quality) {
+      total += value;
+    }
+  }
+  return toInt32(total);
+}
+
+function qualityRank(quality: string | undefined): number | undefined {
+  if (!quality) {
+    return undefined;
+  }
+  const levels = ['normal', 'uncommon', 'rare', 'epic', 'legendary'];
+  const index = levels.indexOf(quality);
+  return index === -1 ? undefined : index;
 }
 
 function operandFrom(signal: SignalID | undefined, constant: number | undefined): Operand {
@@ -840,7 +968,25 @@ function signalName(signal: SignalID | undefined): SignalName | undefined {
   if (!signal) {
     return undefined;
   }
-  return signal.name;
+  if (!signal.name) {
+    return undefined;
+  }
+  return makeSignalKey(signal.name, signal.quality);
+}
+
+function makeSignalKey(name: string, quality: string | undefined): SignalName {
+  return quality ? `${name}@${quality}` : name;
+}
+
+function parseSignalKey(signal: SignalName): { name: string; quality?: string } {
+  const separatorIndex = signal.lastIndexOf('@');
+  if (separatorIndex <= 0 || separatorIndex >= signal.length - 1) {
+    return { name: signal };
+  }
+  return {
+    name: signal.slice(0, separatorIndex),
+    quality: signal.slice(separatorIndex + 1)
+  };
 }
 
 function formatNetworks(model: SimulationModel, networkSignals: ReadonlyMap<string, ReadonlySignalBag>): NetworkOutput[] {

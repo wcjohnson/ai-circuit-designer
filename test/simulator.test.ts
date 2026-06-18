@@ -98,6 +98,181 @@ test('selector combinator select-signal emits the selected signal', async () => 
   assert.deepEqual(signalsOn(result, 1, 'red', 2, 2), { 'signal-B': 9 });
 });
 
+test('selector select mode uses 0-based index_constant with select_max=true (descending)', () => {
+  const result = simulateBlueprint({
+    item: 'blueprint',
+    entities: [
+      {
+        entity_number: 1,
+        name: 'selector-combinator',
+        position: { x: 0, y: 0 },
+        control_behavior: {
+          operation: 'select',
+          select_max: true,
+          index_constant: 0
+        }
+      }
+    ]
+  }, {
+    ticks: 2,
+    inputs: [
+      { entityId: 1, connectorId: 1, wire: 'red', signals: { 'signal-A': 4, 'signal-B': 9, 'signal-C': 6 } }
+    ]
+  });
+
+  assert.deepEqual(signalsOn(result, 1, 'red', 1, 2), { 'signal-B': 9 });
+});
+
+test('selector select mode uses 0-based index_constant with select_max=false (ascending)', () => {
+  const result = simulateBlueprint({
+    item: 'blueprint',
+    entities: [
+      {
+        entity_number: 1,
+        name: 'selector-combinator',
+        position: { x: 0, y: 0 },
+        control_behavior: {
+          operation: 'select',
+          select_max: false,
+          index_constant: 0
+        }
+      }
+    ]
+  }, {
+    ticks: 2,
+    inputs: [
+      { entityId: 1, connectorId: 1, wire: 'red', signals: { 'signal-A': 4, 'signal-B': 9, 'signal-C': 6 } }
+    ]
+  });
+
+  assert.deepEqual(signalsOn(result, 1, 'red', 1, 2), { 'signal-A': 4 });
+});
+
+test('selector select mode uses index_signal value as 0-based index N', () => {
+  const result = simulateBlueprint({
+    item: 'blueprint',
+    entities: [
+      {
+        entity_number: 1,
+        name: 'selector-combinator',
+        position: { x: 0, y: 0 },
+        control_behavior: {
+          operation: 'select',
+          select_max: true,
+          index_signal: { type: 'virtual', name: 'signal-I' }
+        }
+      }
+    ]
+  }, {
+    ticks: 2,
+    inputs: [
+      {
+        entityId: 1,
+        connectorId: 1,
+        wire: 'red',
+        signals: { 'signal-A': 9, 'signal-B': 8, 'signal-C': 7, 'signal-I': 2 }
+      }
+    ]
+  });
+
+  assert.deepEqual(signalsOn(result, 1, 'red', 1, 2), { 'signal-C': 7 });
+});
+
+test('selector combinator count operation emits number of non-zero signals', () => {
+  const result = simulateBlueprint({
+    item: 'blueprint',
+    entities: [
+      {
+        entity_number: 1,
+        name: 'selector-combinator',
+        position: { x: 0, y: 0 },
+        control_behavior: {
+          operation: 'count',
+          count_signal: { type: 'virtual', name: 'signal-C' }
+        }
+      }
+    ]
+  }, {
+    ticks: 2,
+    inputs: [
+      { entityId: 1, connectorId: 1, wire: 'red', signals: { 'signal-A': 1, 'signal-B': -2, 'signal-C': 0 } }
+    ]
+  });
+
+  assert.deepEqual(signalsOn(result, 1, 'red', 1, 2), { 'signal-C': 2 });
+});
+
+test('selector combinator quality-filter operation filters by quality condition', () => {
+  const result = simulateBlueprint({
+    item: 'blueprint',
+    entities: [
+      {
+        entity_number: 1,
+        name: 'selector-combinator',
+        position: { x: 0, y: 0 },
+        control_behavior: {
+          operation: 'quality-filter',
+          quality_filter: { quality: 'rare', comparator: '>=' }
+        }
+      }
+    ]
+  }, {
+    ticks: 2,
+    inputs: [
+      {
+        entityId: 1,
+        connectorId: 1,
+        wire: 'red',
+        signals: {
+          'iron-plate@normal': 10,
+          'iron-plate@rare': 7,
+          'iron-plate@legendary': 3
+        }
+      }
+    ]
+  });
+
+  assert.deepEqual(signalsOn(result, 1, 'red', 1, 2), {
+    'iron-plate@legendary': 3,
+    'iron-plate@rare': 7
+  });
+});
+
+test('selector combinator quality-transfer operation emits destination signal with selected quality', () => {
+  const result = simulateBlueprint({
+    item: 'blueprint',
+    entities: [
+      {
+        entity_number: 1,
+        name: 'selector-combinator',
+        position: { x: 0, y: 0 },
+        control_behavior: {
+          operation: 'quality-transfer',
+          select_quality_from_signal: true,
+          quality_source_signal: { type: 'item', name: 'iron-plate' },
+          quality_destination_signal: { type: 'item', name: 'copper-plate' }
+        }
+      }
+    ]
+  }, {
+    ticks: 2,
+    inputs: [
+      {
+        entityId: 1,
+        connectorId: 1,
+        wire: 'red',
+        signals: {
+          'iron-plate@rare': 7,
+          'iron-plate@legendary': 3,
+          'signal-A': 1
+        }
+      }
+    ]
+  });
+
+  assert.deepEqual(signalsOn(result, 1, 'red', 1, 2), { 'copper-plate@rare': 7 });
+});
+
 test('external test inputs can drive combinator input connectors', async () => {
   const blueprint = await loadExample('arithmetic-input.json');
   const inputs = JSON.parse(await readFile(join(root, 'examples', 'test-inputs.json'), 'utf8')) as ExternalInput[];
