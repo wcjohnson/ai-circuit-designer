@@ -15,7 +15,8 @@ The first tool in the suite is a Factorio circuit network simulator. It reads a 
 - Implements selector combinator select-signal behavior.
 - Applies the Factorio timing model: combinator output for tick `N + 1` is computed from input signals on tick `N`.
 - Allows optional external test input signals connected to specific entity connectors and wire colors.
-- Emits JSON output containing each network's signals per tick.
+- Provides TUI tables for simulation-oriented commands by default.
+- Supports `--json` global flag to emit raw JSON instead of TUI output.
 
 ## Install
 
@@ -48,6 +49,12 @@ PowerShell examples can use `Get-Content`:
 
 ```powershell
 Get-Content examples/constant.json -Raw | node dist/src/cli.js --ticks 3
+```
+
+Compile + simulate DSL in one step:
+
+```bash
+node dist/src/cli.js simulate-dsl --dsl work/latch/multi-signal-latch.dsl --ticks 5
 ```
 
 ## External Test Inputs
@@ -130,7 +137,14 @@ Input files use this shape:
 
 ## Output
 
-The simulator prints JSON with a `ticks` array. Each tick contains every red and green network and its signals after that tick's combinator outputs have been published.
+Simulation-oriented commands (`simulate`, `simulate-dsl`, and `test`) print a TUI table by default:
+- Rows: tick numbers
+- Columns: network ids
+- Cells: signals on that network at that tick
+
+Use `--json` to suppress the table and print raw JSON instead.
+
+Example JSON output (`--json`) has a `ticks` array. Each tick contains every red and green network and its signals after that tick's combinator outputs have been published.
 
 ```json
 {

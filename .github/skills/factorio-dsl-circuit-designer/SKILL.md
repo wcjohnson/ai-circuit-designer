@@ -83,6 +83,13 @@ Assumption policy:
 - Ensure every assertion is behavior-driven (not just structure-driven).
 - Ensure the test suite would fail if core behavior is wrong.
 
+8. Agent reasoning simulation loop (CLI tool).
+- Use the CLI `simulate-dsl` command to compile + simulate quickly during design/debug iterations:
+  - `node dist/src/cli.js simulate-dsl --dsl <path> --ticks <n> --pretty`
+  - Add `--inputs <path>` when targeted external input injection is needed.
+  - Add `--include-blueprint` when you need to inspect compiled entity/wire output while reasoning.
+- Prefer `simulate-dsl` for rapid behavior checks before or alongside `test` assertions.
+
 ## Decision Rules
 
 - If behavior is pure arithmetic with no branch: prefer one arithmetic combinator.

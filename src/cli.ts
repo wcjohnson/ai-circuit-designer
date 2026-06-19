@@ -4,13 +4,14 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { stdin as inputStream } from 'node:process';
 import { inflateSync } from 'node:zlib';
 import { simulateBlueprint } from './simulator.js';
-import type { ExternalInput } from './simulator.js';
+import type { ExternalInput, SimulationResult, TickOutput } from './simulator.js';
 import { compileDsl, runDslTests } from './dsl.js';
 import { writeBlueprintJson, writeBlueprintString } from './blueprint.js';
 
-type Command = 'simulate' | 'compile' | 'test' | 'dump';
+type Command = 'simulate' | 'simulate-dsl' | 'compile' | 'test' | 'dump';
 
 interface BaseCliOptions {
+  json: boolean;
   pretty: boolean;
   help: boolean;
 }
@@ -31,6 +32,14 @@ interface CompileOptions extends BaseCliOptions {
   outputBlueprintStringPath?: string;
 }
 
+interface SimulateDslOptions extends BaseCliOptions {
+  command: 'simulate-dsl';
+  dslPath?: string;
+  inputsPath?: string;
+  ticks: number;
+  includeBlueprint: boolean;
+}
+
 interface TestOptions extends BaseCliOptions {
   command: 'test';
   dslPath?: string;
@@ -43,7 +52,7 @@ interface DumpOptions extends BaseCliOptions {
   blueprint?: string;
 }
 
-type CliOptions = SimulateOptions | CompileOptions | TestOptions | DumpOptions;
+type CliOptions = SimulateOptions | SimulateDslOptions | CompileOptions | TestOptions | DumpOptions;
 
 try {
   const options = parseArgs(process.argv.slice(2));
@@ -62,7 +71,12 @@ try {
       inputs: externalInputs
     });
 
-    printJson(result, options.pretty);
+    if (options.json) {
+      printJson(result, options.pretty);
+    } else {
+      process.stdout.write(renderSimulationTable(result));
+      process.stdout.write('\n');
+    }
     process.exit(0);
   }
 
@@ -70,6 +84,36 @@ try {
     const blueprintInput = await readBlueprintInput(options);
     const blueprintJson = decodeBlueprintInputToJson(blueprintInput);
     printJson(blueprintJson, options.pretty);
+    process.exit(0);
+  }
+
+  if (options.command === 'simulate-dsl') {
+    const dslSource = await readDslSource(options.dslPath);
+    const compiled = compileDsl(dslSource);
+    const externalInputs = options.inputsPath
+      ? JSON.parse(await readFile(options.inputsPath, 'utf8')) as ExternalInput[]
+      : [];
+
+    const simulation = simulateBlueprint(compiled.blueprint, {
+      ticks: options.ticks,
+      inputs: externalInputs
+    });
+
+    const result: Record<string, unknown> = {
+      simulation,
+      networks: compiled.networks,
+      entities: compiled.entities
+    };
+    if (options.includeBlueprint) {
+      result.blueprint = compiled.blueprint;
+    }
+
+    if (options.json) {
+      printJson(result, options.pretty);
+    } else {
+      process.stdout.write(renderSimulationTable(simulation));
+      process.stdout.write('\n');
+    }
     process.exit(0);
   }
 
@@ -97,7 +141,13 @@ try {
   const result = runDslTests(dslSource, {
     testName: options.testName
   });
-  printJson(result, options.pretty);
+
+  if (options.json) {
+    printJson(result, options.pretty);
+  } else {
+    process.stdout.write(renderDslTestTables(result));
+    process.stdout.write('\n');
+  }
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error);
   process.stderr.write(`${message}\n`);
@@ -105,13 +155,18 @@ try {
 }
 
 function parseArgs(args: string[]): CliOptions {
-  const first = args[0]?.toLowerCase();
-  const hasExplicitCommand = first === 'simulate' || first === 'compile' || first === 'test' || first === 'dump';
-  const command = (hasExplicitCommand ? first : 'simulate') as Command;
-  const commandArgs = hasExplicitCommand ? args.slice(1) : args;
+  const knownCommands: Command[] = ['simulate', 'simulate-dsl', 'compile', 'test', 'dump'];
+  const commandIndex = args.findIndex((arg) => knownCommands.includes(arg.toLowerCase() as Command));
+  const command = (commandIndex >= 0 ? args[commandIndex].toLowerCase() : 'simulate') as Command;
+  const commandArgs = commandIndex >= 0
+    ? [...args.slice(0, commandIndex), ...args.slice(commandIndex + 1)]
+    : args;
 
   if (command === 'simulate') {
     return parseSimulateArgs(commandArgs);
+  }
+  if (command === 'simulate-dsl') {
+    return parseSimulateDslArgs(commandArgs);
   }
   if (command === 'compile') {
     return parseCompileArgs(commandArgs);
@@ -126,6 +181,7 @@ function parseSimulateArgs(args: string[]): SimulateOptions {
   const options: SimulateOptions = {
     command: 'simulate',
     ticks: 3,
+    json: false,
     pretty: false,
     help: false
   };
@@ -151,6 +207,9 @@ function parseSimulateArgs(args: string[]): SimulateOptions {
           throw new Error('--ticks must be a positive integer.');
         }
         break;
+      case '--json':
+        options.json = true;
+        break;
       case '--pretty':
         options.pretty = true;
         break;
@@ -173,6 +232,7 @@ function parseSimulateArgs(args: string[]): SimulateOptions {
 function parseCompileArgs(args: string[]): CompileOptions {
   const options: CompileOptions = {
     command: 'compile',
+    json: false,
     pretty: false,
     help: false,
     includeBlueprintString: false
@@ -196,6 +256,57 @@ function parseCompileArgs(args: string[]): CompileOptions {
       case '--out-string':
         options.outputBlueprintStringPath = readValue(args, ++index, arg);
         break;
+      case '--json':
+        options.json = true;
+        break;
+      case '--pretty':
+        options.pretty = true;
+        break;
+      case '--help':
+      case '-h':
+        options.help = true;
+        break;
+      default:
+        throw new Error(`Unknown argument '${arg}'.`);
+    }
+  }
+
+  return options;
+}
+
+function parseSimulateDslArgs(args: string[]): SimulateDslOptions {
+  const options: SimulateDslOptions = {
+    command: 'simulate-dsl',
+    ticks: 3,
+    json: false,
+    pretty: false,
+    help: false,
+    includeBlueprint: false
+  };
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    switch (arg) {
+      case '--dsl':
+      case '-d':
+        options.dslPath = readValue(args, ++index, arg);
+        break;
+      case '--inputs':
+        options.inputsPath = readValue(args, ++index, arg);
+        break;
+      case '--ticks':
+      case '-t':
+        options.ticks = Number(readValue(args, ++index, arg));
+        if (!Number.isInteger(options.ticks) || options.ticks < 1) {
+          throw new Error('--ticks must be a positive integer.');
+        }
+        break;
+      case '--include-blueprint':
+        options.includeBlueprint = true;
+        break;
+      case '--json':
+        options.json = true;
+        break;
       case '--pretty':
         options.pretty = true;
         break;
@@ -214,6 +325,7 @@ function parseCompileArgs(args: string[]): CompileOptions {
 function parseTestArgs(args: string[]): TestOptions {
   const options: TestOptions = {
     command: 'test',
+    json: false,
     pretty: false,
     help: false
   };
@@ -227,6 +339,9 @@ function parseTestArgs(args: string[]): TestOptions {
         break;
       case '--test':
         options.testName = readValue(args, ++index, arg);
+        break;
+      case '--json':
+        options.json = true;
         break;
       case '--pretty':
         options.pretty = true;
@@ -246,6 +361,7 @@ function parseTestArgs(args: string[]): TestOptions {
 function parseDumpArgs(args: string[]): DumpOptions {
   const options: DumpOptions = {
     command: 'dump',
+    json: false,
     pretty: false,
     help: false
   };
@@ -260,6 +376,9 @@ function parseDumpArgs(args: string[]): DumpOptions {
       case '--blueprint':
       case '-b':
         options.blueprint = readValue(args, ++index, arg);
+        break;
+      case '--json':
+        options.json = true;
         break;
       case '--pretty':
         options.pretty = true;
@@ -340,6 +459,7 @@ function printHelp(): void {
       '',
       'Commands:',
       '  simulate       Simulate a Factorio blueprint (default command).',
+      '  simulate-dsl   Compile DSL and simulate in one step (agent-friendly).',
       '  compile        Compile DSL into blueprint JSON (+ optional tests metadata).',
       '  test           Compile DSL and execute DSL tests.',
       '  dump           Parse and print blueprint JSON.',
@@ -349,6 +469,12 @@ function printHelp(): void {
       '  -b, --blueprint <value>  Read blueprint from CLI argument',
       '      --inputs <path>      Read external input signals JSON',
       '  -t, --ticks <count>      Number of ticks to simulate (default 3)',
+      '',
+      'simulate-dsl options:',
+      '  -d, --dsl <path>          Read DSL source file (or stdin when omitted)',
+      '      --inputs <path>       Read external input signals JSON',
+      '  -t, --ticks <count>       Number of ticks to simulate (default 3)',
+      '      --include-blueprint   Include compiled blueprint in output',
       '',
       'compile options:',
       '  -d, --dsl <path>             Read DSL source file (or stdin when omitted)',
@@ -365,8 +491,89 @@ function printHelp(): void {
       '  -b, --blueprint <value>  Read blueprint string from CLI argument',
       '',
       'global options:',
+      '      --json             Output raw JSON (suppresses TUI tables)',
       '      --pretty           Pretty-print JSON output',
       '  -h, --help             Show this help'
     ].join('\n')
   );
+}
+
+function renderDslTestTables(result: ReturnType<typeof runDslTests>): string {
+  const sections: string[] = [];
+  sections.push(`DSL tests: ${result.passed ? 'PASS' : 'FAIL'}`);
+
+  for (const test of result.tests) {
+    sections.push('');
+    sections.push(`Test: ${test.name} (${test.passed ? 'PASS' : 'FAIL'})`);
+    sections.push(renderTickNetworkTable(test.simulation.ticks));
+
+    const failedAssertions = test.assertions.filter((assertion: { passed: boolean }) => !assertion.passed);
+    if (failedAssertions.length > 0) {
+      sections.push('Failed assertions:');
+      for (const assertion of failedAssertions) {
+        sections.push(`- tick ${assertion.tick}: ${assertion.description} (expected=${assertion.expected}, actual=${assertion.actual})`);
+      }
+    }
+  }
+
+  return sections.join('\n');
+}
+
+function renderSimulationTable(result: SimulationResult): string {
+  return renderTickNetworkTable(result.ticks);
+}
+
+function renderTickNetworkTable(ticks: TickOutput[]): string {
+  const networkIds: string[] = [];
+  const seenNetworkIds = new Set<string>();
+  for (const tick of ticks) {
+    for (const network of tick.networks) {
+      if (!seenNetworkIds.has(network.id)) {
+        seenNetworkIds.add(network.id);
+        networkIds.push(network.id);
+      }
+    }
+  }
+
+  const headers = ['tick', ...networkIds];
+  const rows = ticks.map((tick) => {
+    const row: string[] = [String(tick.tick)];
+    for (const networkId of networkIds) {
+      const network = tick.networks.find((candidate) => candidate.id === networkId);
+      row.push(formatSignalMap(network?.signals));
+    }
+    return row;
+  });
+
+  return renderAsciiTable(headers, rows);
+}
+
+function formatSignalMap(signals: Record<string, number> | undefined): string {
+  if (!signals) {
+    return '-';
+  }
+  const entries = Object.entries(signals)
+    .filter(([, value]) => value !== 0)
+    .sort(([left], [right]) => left.localeCompare(right));
+  if (entries.length === 0) {
+    return '-';
+  }
+  return entries.map(([name, value]) => `${name}=${value}`).join(', ');
+}
+
+function renderAsciiTable(headers: string[], rows: string[][]): string {
+  const columnWidths = headers.map((header, index) => {
+    const rowMax = rows.reduce((max, row) => Math.max(max, (row[index] ?? '').length), 0);
+    return Math.max(header.length, rowMax);
+  });
+
+  const horizontal = `+${columnWidths.map((width) => '-'.repeat(width + 2)).join('+')}+`;
+  const formatRow = (cells: string[]) => `| ${cells.map((cell, index) => (cell ?? '').padEnd(columnWidths[index])).join(' | ')} |`;
+
+  const lines: string[] = [horizontal, formatRow(headers), horizontal];
+  for (const row of rows) {
+    lines.push(formatRow(row));
+  }
+  lines.push(horizontal);
+  return lines.join('\n');
 }
