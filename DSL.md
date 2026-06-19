@@ -28,7 +28,6 @@ Optional top-level declaration:
 
 Body keys:
 
-- `description: <arbitrary text>`
 - `imports: <space-separated circuit names>` (optional)
 
 Rules:
@@ -36,13 +35,14 @@ Rules:
 - If `circuit:` is present, `<circuit_name>` must match the source filename stem before `.circuit-dsl` (or `.circuit_dsl`) or compilation fails.
 - Imported circuits are loaded from files relative to the current DSL file.
 - If there are no imports, omit `imports:`.
+- Channel/interface notes should be placed in a top-of-file `//` multi-line comment block for agent readability.
 
 Indentation and formatting
 
 - Indentation is significant.
 - Spaces and tabs are both accepted.
 - Empty lines are ignored.
-- Line comments are supported: text after `#` on a line is ignored.
+- Comment lines are supported when the first non-whitespace characters are `//`.
 
 Signals
 

@@ -1,11 +1,14 @@
+// Channels:
+// SIG_IN (input): red data bus to be latched when not reset.
+// RESET_IN (input): green control where non-zero R clears and blocks latch updates while high.
+// OUT (output): public red latched data view with lock marker containment.
 circuit: r-latch
-  description: Channels - SIG_IN (input): red data bus to be latched when not reset; RESET_IN (input): green control where non-zero "R" clears and blocks latch updates while high; OUT (output): public red latched data view with lock marker containment.
 
 combinators:
   SIG_IN: io medium-electric-pole
   RESET_IN: io medium-electric-pole
   OUT: io medium-electric-pole
-  OUT_BUF: arithmetic
+  OUT_CLEAN: arithmetic
     each R + 0 -> each
   CAPTURE: decider
     conditions:
@@ -45,11 +48,11 @@ wires:
     RESET_IN -> MARK_HOLD in
   network Latch: red
     CAPTURE out -> HOLD in
-    CAPTURE out -> OUT_BUF in
+    CAPTURE out -> OUT_CLEAN in
     HOLD out -> HOLD in
-    HOLD out -> OUT_BUF in
+    HOLD out -> OUT_CLEAN in
   network PublicOut: red
-    OUT_BUF out -> OUT
+    OUT_CLEAN out -> OUT
   network Lock: green
     MARK_SET out -> CAPTURE in
     MARK_SET out -> MARK_HOLD in

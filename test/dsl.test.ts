@@ -192,6 +192,62 @@ combinators:
   );
 });
 
+test('compileDsl ignores lines starting with // comments', () => {
+  const source = `
+// top level comment
+combinators:
+  // combinator comment
+  C1: constant
+    // signal comment
+    "A" = 1
+
+wires:
+  // network comment
+  network N1: red
+    C1 -> C1
+
+tests:
+  // test comment
+  comment-lines:
+    tick 0:
+      // action comment
+      assert signal "A" = 1 on network N1
+`;
+
+  const result = runDslTests(source);
+  assert.equal(result.passed, true);
+});
+
+test('compileDsl does not treat # as a comment marker', () => {
+  const source = `
+# not-a-comment
+combinators:
+  C1: constant
+    "A" = 1
+`;
+
+  assert.throws(
+    () => compileDsl(source),
+    /expected top-level section header/
+  );
+});
+
+test('compileDsl rejects circuit.description metadata', () => {
+  const source = `
+circuit: demo
+  description: old metadata field
+
+combinators:
+  C1: constant
+    "A" = 1
+`;
+
+  assert.throws(
+    () => compileDsl(source, { sourcePath: 'demo.circuit-dsl' }),
+    /unsupported circuit metadata key 'description'/
+  );
+});
+
 test('compileDsl inlines imported subcircuit endpoints', () => {
   const dir = mkdtempSync(join(tmpdir(), 'dsl-subcircuit-'));
   try {

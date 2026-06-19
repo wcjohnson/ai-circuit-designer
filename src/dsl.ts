@@ -85,7 +85,6 @@ interface ParsedWireEndpoint {
 
 interface ParsedCircuitInfo {
   name: string;
-  description?: string;
   imports?: string[];
 }
 
@@ -397,10 +396,6 @@ function parseCircuitSection(section: { header: SourceLine; value?: string; bloc
 
     const key = kvMatch[1].toLowerCase();
     const value = kvMatch[2].trim();
-    if (key === 'description') {
-      info.description = value;
-      continue;
-    }
     if (key === 'imports') {
       const imports = value ? value.split(/\s+/).filter(Boolean) : [];
       if (imports.length > 0) {
@@ -1614,16 +1609,19 @@ function lexDsl(source: string): SourceLine[] {
   const lines: SourceLine[] = [];
   const normalized = source.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
   normalized.split('\n').forEach((rawLine, index) => {
-    const commentRemoved = rawLine.replace(/\s+#.*$/, '');
-    if (!commentRemoved.trim()) {
+    if (/^\s*\/\//.test(rawLine)) {
       return;
     }
 
-    const indentText = /^\s*/.exec(commentRemoved)?.[0] ?? '';
+    if (!rawLine.trim()) {
+      return;
+    }
+
+    const indentText = /^\s*/.exec(rawLine)?.[0] ?? '';
     lines.push({
       line: index + 1,
       indent: countIndent(indentText),
-      text: commentRemoved.trim()
+      text: rawLine.trim()
     });
   });
 

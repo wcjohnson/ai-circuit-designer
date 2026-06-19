@@ -56,9 +56,9 @@ Assumption policy:
 
 1a. Define embeddable circuit metadata.
 - Always include `circuit: <name>` where `<name>` matches the target filename stem.
-- Add `description:` with agent-friendly channel semantics for every interface combinator.
-- For `input`/`output` interface combinators, describe each channel by ID and role in one compact sentence, for example:
-  - `SIG_IN (input): ...; RESET_IN (input): ...; OUT (output): ...`
+- Add a top-of-file `//` multi-line comment block with agent-friendly channel semantics for every interface combinator.
+- For interface combinators, describe each channel by ID and role in one compact sentence, for example:
+  - `// Channels: SIG_IN (input): ...; RESET_IN (input): ...; OUT (output): ...`
 - Include `imports:` only when one or more imported subcircuits are actually used; otherwise omit `imports:`.
 
 2. Choose combinator strategy.
@@ -99,6 +99,7 @@ Assumption policy:
 - First, design and run output-pollution tests to determine whether external/public-wire back-propagation can corrupt internal state.
 - Only if those tests indicate harmful pollution risk, add identity buffer combinators before public outputs.
 - Identity buffer pattern: arithmetic combinator with `each + 0 -> each`.
+- Naming convention: name pollution-prevention identity buffers with `_CLEAN` suffix (for example `OUT_CLEAN`)
 - Place the identity buffer between internal-state/output-generation network and externally exposed output network.
 - After adding the identity buffer, keep or extend the pollution tests so they explicitly prove internal-state isolation.
 

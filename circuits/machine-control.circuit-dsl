@@ -1,5 +1,10 @@
+// Channels:
+// REQ (input): red outstanding requested recipes by signal and remaining count.
+// M_READ (input): red machine readback including recipe ingredient needs plus control flags F and W.
+// AVAIL (input): red currently available ingredient signals.
+// NEEDS (output): red pass-through of machine read ingredient needs.
+// M_WRITE (output): red selected recipe signal for machine write.
 circuit: machine-control
-  description: Channels - REQ (input): red outstanding requested recipes by signal and remaining count; M_READ (input): red machine readback including recipe ingredient needs plus control flags F and W; AVAIL (input): red currently available ingredient signals; NEEDS (output): red pass-through of machine read ingredient needs; M_WRITE (output): red selected recipe signal for machine write.
   imports: timer s-latch
 
 combinators:
@@ -11,13 +16,11 @@ combinators:
   TIMEOUT_CFG: constant
     "H" = 150
 
-  NEEDS_BUF: arithmetic
+  NEEDS_CLEAN: arithmetic
     each R + 0 -> each
 
-  NEG_NEEDS: arithmetic
-    each R * -1 -> each
   DELTA: arithmetic
-    each R + each G -> each
+    each R - each G -> each
   WAIT_IF_SHORT: decider
     conditions:
       anything R < 0
@@ -88,16 +91,15 @@ wires:
     REQ -> SWITCH_IF_UNREQUESTED in
 
   network MReadBus: red
-    M_READ -> NEEDS_BUF in
-    M_READ -> NEG_NEEDS in
+    M_READ -> NEEDS_CLEAN in
 
   network NeedsOut: red
-    NEEDS_BUF out -> NEEDS
+    NEEDS_CLEAN out -> NEEDS
 
   network AvailMinusNeedsA: red
     AVAIL -> DELTA in
   network AvailMinusNeedsB: green
-    NEG_NEEDS out -> DELTA in
+    NEEDS_CLEAN out -> DELTA in
 
   network WaitCalc: red
     DELTA out -> WAIT_IF_SHORT in
