@@ -88,6 +88,8 @@ Assumption policy:
 - Include edge/boundary tests when behavior has thresholds or indexing.
 - Include timing tests that verify expected values at relevant ticks (including delayed-output behavior).
 - Include at least one stability/hold test when behavior should persist over multiple ticks.
+- For known upticking/internal counters that can run for long periods, include a practical overflow check (seed near max or force a near-wrap state) and prevent wrap-induced regressions (for example false timeout clears).
+- Apply overflow hardening where growth is structurally expected (timers/counters), but do not add blanket overflow checks to every unrelated input path.
 - Use `apply signal` for network stimuli.
 - Use `set constant combinator ... signals:` for staged fixture changes.
 - Assert at the correct tick accounting for N -> N+1 combinator output delay.

@@ -1,14 +1,21 @@
 circuit: timer
-  description: Channels - WAIT_IN (input): red W gate, non-zero while waiting should accumulate; RESET_IN (input): green R reset gate, non-zero forces wait gate off; OUT (output): red O asserted when wait has been continuous long enough.
+  description: Channels - WAIT_IN (input): red W gate, non-zero while waiting should accumulate; RESET_IN (input): green R reset gate, non-zero forces wait gate off; TIMEOUT_IN (input): green H threshold signal that defines when timeout should fire; OUT (output): red O asserted when wait has been continuous long enough.
 
 combinators:
   WAIT_IN: input medium-electric-pole
   RESET_IN: input medium-electric-pole
+  TIMEOUT_IN: input medium-electric-pole
   OUT: output medium-electric-pole
   WAIT_GATE: decider
     conditions:
       "W" R != 0
       AND "R" G = 0
+    outputs:
+      "W" = 1
+  STEP_GATE: decider
+    conditions:
+      "W" G != 0
+      AND "T" R < "H" G
     outputs:
       "W" = 1
   INC: arithmetic
@@ -17,7 +24,7 @@ combinators:
     "T" R * "W" G -> "T"
   TIMEOUT: decider
     conditions:
-      "T" R >= 150
+      "T" R >= "H" G
     outputs:
       "O" = 1
 
@@ -26,12 +33,18 @@ wires:
     WAIT_IN out -> WAIT_GATE in
   network Reset: green
     RESET_IN out -> WAIT_GATE in
-  network WaitCtl: green
-    WAIT_GATE out -> INC in
+  network TimeoutIn: green
+    TIMEOUT_IN out -> TIMEOUT in
+    TIMEOUT_IN out -> STEP_GATE in
+  network WaitKeep: green
     WAIT_GATE out -> MASK in
+    WAIT_GATE out -> STEP_GATE in
+  network WaitStep: green
+    STEP_GATE out -> INC in
   network CountState: red
     MASK out -> INC in
     MASK out -> TIMEOUT in
+    MASK out -> STEP_GATE in
   network CountNext: red
     INC out -> MASK in
   network PublicOut: red
@@ -39,12 +52,15 @@ wires:
 
 tests:
   idle-has-no-timeout:
+    tick 0:
+      apply signal "H" = 150 to input TIMEOUT_IN green continuously
     tick 5:
       assert signal "O" = 0 on output OUT red
 
   wait-reaches-timeout-after-threshold:
     tick 0:
       apply signal "W" = 1 to input WAIT_IN red continuously
+      apply signal "H" = 150 to input TIMEOUT_IN green continuously
     tick 200:
       assert signal "O" = 0 on output OUT red
     tick 320:
@@ -53,9 +69,29 @@ tests:
   reset-clears-timeout:
     tick 0:
       apply signal "W" = 1 to input WAIT_IN red continuously
+      apply signal "H" = 150 to input TIMEOUT_IN green continuously
     tick 320:
       assert signal "O" = 1 on output OUT red
       apply signal "R" = 1 to input RESET_IN green continuously
     tick 332:
       assert signal "O" = 0 on output OUT red
+
+  non-unit-w-values-do-not-change-timer-rate:
+    tick 0:
+      apply signal "W" = 7 to input WAIT_IN red continuously
+      apply signal "H" = 150 to input TIMEOUT_IN green continuously
+    tick 200:
+      assert signal "O" = 0 on output OUT red
+    tick 320:
+      assert signal "O" = 1 on output OUT red
+
+  timeout-counter-stops-growing-after-threshold:
+    tick 0:
+      apply signal "W" = 1 to input WAIT_IN red continuously
+      apply signal "H" = 150 to input TIMEOUT_IN green continuously
+    tick 360:
+      assert signal "O" = 1 on output OUT red
+      assert signal "T" = 151 on network CountState
+    tick 361:
+      assert signal "T" = 150 on network CountState
 

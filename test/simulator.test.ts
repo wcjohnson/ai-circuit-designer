@@ -44,6 +44,174 @@ test('arithmetic combinator outputs on the tick after reading input', async () =
   assert.deepEqual(signalsOn(result, 1, 'green', 2, 2), { 'signal-B': 6 });
 });
 
+test('int32 overflow wraps INT_MAX + 1 to INT_MIN', () => {
+  const result = simulateBlueprint({
+    item: 'blueprint',
+    entities: [
+      {
+        entity_number: 1,
+        name: 'arithmetic-combinator',
+        position: { x: 0, y: 0 },
+        control_behavior: {
+          arithmetic_conditions: {
+            first_signal: { type: 'virtual', name: 'signal-A' },
+            operation: '+',
+            second_constant: 1,
+            output_signal: { type: 'virtual', name: 'signal-A' }
+          }
+        }
+      }
+    ]
+  }, {
+    ticks: 2,
+    inputs: [
+      { entityId: 1, connectorId: 1, wire: 'red', signals: { 'signal-A': 2147483647 } }
+    ]
+  });
+
+  assert.deepEqual(signalsOn(result, 1, 'red', 1, 2), { 'signal-A': -2147483648 });
+});
+
+test('int32 underflow wraps INT_MIN - 1 to INT_MAX', () => {
+  const result = simulateBlueprint({
+    item: 'blueprint',
+    entities: [
+      {
+        entity_number: 1,
+        name: 'arithmetic-combinator',
+        position: { x: 0, y: 0 },
+        control_behavior: {
+          arithmetic_conditions: {
+            first_signal: { type: 'virtual', name: 'signal-A' },
+            operation: '-',
+            second_constant: 1,
+            output_signal: { type: 'virtual', name: 'signal-A' }
+          }
+        }
+      }
+    ]
+  }, {
+    ticks: 2,
+    inputs: [
+      { entityId: 1, connectorId: 1, wire: 'red', signals: { 'signal-A': -2147483648 } }
+    ]
+  });
+
+  assert.deepEqual(signalsOn(result, 1, 'red', 1, 2), { 'signal-A': 2147483647 });
+});
+
+test('multiplication overflow truncates bits: INT_MAX * 2 = -2', () => {
+  const result = simulateBlueprint({
+    item: 'blueprint',
+    entities: [
+      {
+        entity_number: 1,
+        name: 'arithmetic-combinator',
+        position: { x: 0, y: 0 },
+        control_behavior: {
+          arithmetic_conditions: {
+            first_signal: { type: 'virtual', name: 'signal-A' },
+            operation: '*',
+            second_constant: 2,
+            output_signal: { type: 'virtual', name: 'signal-A' }
+          }
+        }
+      }
+    ]
+  }, {
+    ticks: 2,
+    inputs: [
+      { entityId: 1, connectorId: 1, wire: 'red', signals: { 'signal-A': 2147483647 } }
+    ]
+  });
+
+  assert.deepEqual(signalsOn(result, 1, 'red', 1, 2), { 'signal-A': -2 });
+});
+
+test('multiplication overflow truncates bits: 1_000_000 * 3_000 = -1_294_967_296', () => {
+  const result = simulateBlueprint({
+    item: 'blueprint',
+    entities: [
+      {
+        entity_number: 1,
+        name: 'arithmetic-combinator',
+        position: { x: 0, y: 0 },
+        control_behavior: {
+          arithmetic_conditions: {
+            first_signal: { type: 'virtual', name: 'signal-A' },
+            operation: '*',
+            second_constant: 3000,
+            output_signal: { type: 'virtual', name: 'signal-A' }
+          }
+        }
+      }
+    ]
+  }, {
+    ticks: 2,
+    inputs: [
+      { entityId: 1, connectorId: 1, wire: 'red', signals: { 'signal-A': 1000000 } }
+    ]
+  });
+
+  assert.deepEqual(signalsOn(result, 1, 'red', 1, 2), { 'signal-A': -1294967296 });
+});
+
+test('multiplication overflow truncates bits: INT_MIN * -1 = INT_MIN', () => {
+  const result = simulateBlueprint({
+    item: 'blueprint',
+    entities: [
+      {
+        entity_number: 1,
+        name: 'arithmetic-combinator',
+        position: { x: 0, y: 0 },
+        control_behavior: {
+          arithmetic_conditions: {
+            first_signal: { type: 'virtual', name: 'signal-A' },
+            operation: '*',
+            second_constant: -1,
+            output_signal: { type: 'virtual', name: 'signal-A' }
+          }
+        }
+      }
+    ]
+  }, {
+    ticks: 2,
+    inputs: [
+      { entityId: 1, connectorId: 1, wire: 'red', signals: { 'signal-A': -2147483648 } }
+    ]
+  });
+
+  assert.deepEqual(signalsOn(result, 1, 'red', 1, 2), { 'signal-A': -2147483648 });
+});
+
+test('multiplication overflow truncates bits: 65536 * 65536 = 0', () => {
+  const result = simulateBlueprint({
+    item: 'blueprint',
+    entities: [
+      {
+        entity_number: 1,
+        name: 'arithmetic-combinator',
+        position: { x: 0, y: 0 },
+        control_behavior: {
+          arithmetic_conditions: {
+            first_signal: { type: 'virtual', name: 'signal-A' },
+            operation: '*',
+            second_constant: 65536,
+            output_signal: { type: 'virtual', name: 'signal-A' }
+          }
+        }
+      }
+    ]
+  }, {
+    ticks: 2,
+    inputs: [
+      { entityId: 1, connectorId: 1, wire: 'red', signals: { 'signal-A': 65536 } }
+    ]
+  });
+
+  assert.deepEqual(signalsOn(result, 1, 'red', 1, 2), {});
+});
+
 test('decider combinator emits configured output when condition passes', async () => {
   const blueprint = await loadExample('decider.json');
   const result = simulateBlueprint(blueprint, { ticks: 2 });

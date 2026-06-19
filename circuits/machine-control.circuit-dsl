@@ -8,6 +8,8 @@ combinators:
   AVAIL: input medium-electric-pole
   NEEDS: output medium-electric-pole
   M_WRITE: output medium-electric-pole
+  TIMEOUT_CFG: constant
+    "H" = 150
 
   NEEDS_BUF: arithmetic
     each R + 0 -> each
@@ -94,6 +96,8 @@ wires:
 
   network TimerReset: green
     INC_ON_TIMEOUT out -> TIMER RESET_IN
+  network TimerThreshold: green
+    TIMEOUT_CFG out -> TIMER TIMEOUT_IN
 
   network IndexDelta: red
     INC_ON_TIMEOUT out -> INDEX_NEXT in
@@ -169,8 +173,8 @@ tests:
       apply signal item(iron-plate) = 0 to input AVAIL red continuously
     tick 100:
       assert signal "A" = 12 on output M_WRITE red
-    tick 312:
+    tick 313:
       assert signal "B" = 8 on output M_WRITE red
-    tick 314:
+    tick 315:
       assert signal "A" = 12 on output M_WRITE red
 
