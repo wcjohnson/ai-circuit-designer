@@ -9,6 +9,19 @@ import type { ExternalInput, SimulationResult, TickOutput } from './simulator.js
 import { compileDsl, runDslTests } from './dsl.js';
 import { writeBlueprintJson, writeBlueprintString } from './blueprint.js';
 
+interface IdenticalTickSentinel {
+  tick: number;
+  throughTick?: number;
+  sentinel: 'identical-with-last-tick';
+  identicalToPrevious: true;
+}
+
+type CompactedTick = TickOutput | IdenticalTickSentinel;
+
+type CompactedTickFrame =
+  | { kind: 'tick'; tick: TickOutput }
+  | { kind: 'identical'; tick: number; throughTick: number };
+
 type Command = 'simulate' | 'simulate-dsl' | 'compile' | 'test' | 'dump';
 
 interface BaseCliOptions {
@@ -73,7 +86,7 @@ try {
     });
 
     if (options.json) {
-      printJson(result, options.pretty);
+      printJson(compactSimulationResultForJson(result), options.pretty);
     } else {
       process.stdout.write(renderSimulationTable(result));
       process.stdout.write('\n');
@@ -110,7 +123,10 @@ try {
     }
 
     if (options.json) {
-      printJson(result, options.pretty);
+      printJson({
+        ...result,
+        simulation: compactSimulationResultForJson(simulation)
+      }, options.pretty);
     } else {
       process.stdout.write(renderSimulationTable(simulation));
       process.stdout.write('\n');
@@ -149,7 +165,7 @@ try {
   });
 
   if (options.json) {
-    printJson(result, options.pretty);
+    printJson(compactDslTestResultForJson(result), options.pretty);
   } else {
     process.stdout.write(renderDslTestTables(result));
     process.stdout.write('\n');
@@ -534,7 +550,9 @@ function renderDslTestTables(result: ReturnType<typeof runDslTests>): string {
   for (const test of result.tests) {
     sections.push('');
     sections.push(`Test: ${test.name} (${test.passed ? 'PASS' : 'FAIL'})`);
-    sections.push(renderTickNetworkTable(test.simulation.ticks));
+    if (!test.passed) {
+      sections.push(renderTickNetworkTable(test.simulation.ticks));
+    }
 
     const failedAssertions = test.assertions.filter((assertion: { passed: boolean }) => !assertion.passed);
     if (failedAssertions.length > 0) {
@@ -548,11 +566,31 @@ function renderDslTestTables(result: ReturnType<typeof runDslTests>): string {
   return sections.join('\n');
 }
 
+function compactDslTestResultForJson(result: ReturnType<typeof runDslTests>): unknown {
+  return {
+    passed: result.passed,
+    tests: result.tests.map((test) => {
+      if (!test.passed) {
+        return {
+          ...test,
+          simulation: compactSimulationResultForJson(test.simulation)
+        };
+      }
+      return {
+        name: test.name,
+        passed: test.passed
+      };
+    })
+  };
+}
+
 function renderSimulationTable(result: SimulationResult): string {
   return renderTickNetworkTable(result.ticks);
 }
 
 function renderTickNetworkTable(ticks: TickOutput[]): string {
+  const MAX_TABLE_ROWS = 10;
+  const MAX_TABLE_COLUMNS = 10;
   const networkIds: string[] = [];
   const seenNetworkIds = new Set<string>();
   for (const tick of ticks) {
@@ -564,17 +602,118 @@ function renderTickNetworkTable(ticks: TickOutput[]): string {
     }
   }
 
-  const headers = ['tick', ...networkIds];
-  const rows = ticks.map((tick) => {
-    const row: string[] = [String(tick.tick)];
-    for (const networkId of networkIds) {
-      const network = tick.networks.find((candidate) => candidate.id === networkId);
+  const allHeaders = ['tick', ...networkIds];
+  const headers = allHeaders.slice(0, MAX_TABLE_COLUMNS);
+  const compacted = compactTicks(ticks);
+  const rows = compacted.slice(0, MAX_TABLE_ROWS).map((entry) => {
+    if (isIdenticalTickSentinel(entry)) {
+      const row: string[] = [formatSentinelTickRange(entry)];
+      const visibleNetworkCount = Math.max(0, MAX_TABLE_COLUMNS - 1);
+      if (visibleNetworkCount > 0) {
+        row.push('identical with last tick');
+        for (let index = 1; index < visibleNetworkCount; index += 1) {
+          row.push('-');
+        }
+      }
+      return row;
+    }
+
+    const row: string[] = [String(entry.tick)];
+    for (const networkId of networkIds.slice(0, Math.max(0, MAX_TABLE_COLUMNS - 1))) {
+      const network = entry.networks.find((candidate) => candidate.id === networkId);
       row.push(formatSignalMap(network?.signals));
     }
     return row;
   });
 
-  return renderAsciiTable(headers, rows);
+  const omittedRows = Math.max(0, compacted.length - rows.length);
+  const omittedColumns = Math.max(0, allHeaders.length - headers.length);
+  const table = renderAsciiTable(headers, rows);
+
+  if (omittedRows === 0 && omittedColumns === 0) {
+    return table;
+  }
+
+  return `${table}\n(omitted ${omittedRows} rows and ${omittedColumns} columns)`;
+}
+
+function compactSimulationResultForJson(result: SimulationResult): { ticks: CompactedTick[]; ignoredEntities: SimulationResult['ignoredEntities'] } {
+  return {
+    ...result,
+    ticks: compactTicks(result.ticks)
+  };
+}
+
+function compactTicks(ticks: TickOutput[]): CompactedTick[] {
+  return compactTickFrames(ticks).map((frame) => {
+    if (frame.kind === 'tick') {
+      return frame.tick;
+    }
+    return frame.tick === frame.throughTick
+      ? { tick: frame.tick, sentinel: 'identical-with-last-tick', identicalToPrevious: true }
+      : { tick: frame.tick, throughTick: frame.throughTick, sentinel: 'identical-with-last-tick', identicalToPrevious: true };
+  });
+}
+
+function compactTickFrames(ticks: TickOutput[]): CompactedTickFrame[] {
+  if (ticks.length === 0) {
+    return [];
+  }
+
+  const frames: CompactedTickFrame[] = [{ kind: 'tick', tick: ticks[0] }];
+  let identicalRunStart: number | undefined;
+  let identicalRunEnd: number | undefined;
+
+  for (let index = 1; index < ticks.length; index += 1) {
+    const previous = ticks[index - 1];
+    const current = ticks[index];
+    if (haveEquivalentNetworkSignals(previous, current)) {
+      if (identicalRunStart === undefined) {
+        identicalRunStart = current.tick;
+      }
+      identicalRunEnd = current.tick;
+      continue;
+    }
+
+    if (identicalRunStart !== undefined && identicalRunEnd !== undefined) {
+      frames.push({ kind: 'identical', tick: identicalRunStart, throughTick: identicalRunEnd });
+      identicalRunStart = undefined;
+      identicalRunEnd = undefined;
+    }
+
+    frames.push({ kind: 'tick', tick: current });
+  }
+
+  if (identicalRunStart !== undefined && identicalRunEnd !== undefined) {
+    frames.push({ kind: 'identical', tick: identicalRunStart, throughTick: identicalRunEnd });
+  }
+
+  return frames;
+}
+
+function haveEquivalentNetworkSignals(left: TickOutput, right: TickOutput): boolean {
+  return buildTickNetworkSignalSignature(left) === buildTickNetworkSignalSignature(right);
+}
+
+function buildTickNetworkSignalSignature(tick: TickOutput): string {
+  const sortedNetworks = [...tick.networks].sort((left, right) => left.id.localeCompare(right.id));
+  return sortedNetworks
+    .map((network) => {
+      const sortedSignals = Object.entries(network.signals)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([name, value]) => `${name}:${value}`)
+        .join(',');
+      return `${network.id}[${sortedSignals}]`;
+    })
+    .join('|');
+}
+
+function isIdenticalTickSentinel(value: CompactedTick): value is IdenticalTickSentinel {
+  return 'identicalToPrevious' in value;
+}
+
+function formatSentinelTickRange(entry: IdenticalTickSentinel): string {
+  return entry.throughTick !== undefined ? `${entry.tick}-${entry.throughTick}` : String(entry.tick);
 }
 
 function formatSignalMap(signals: Record<string, number> | undefined): string {

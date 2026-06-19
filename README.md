@@ -150,6 +150,9 @@ Simulation-oriented commands (`simulate`, `simulate-dsl`, and `test`) print a TU
 - Columns: network ids
 - Cells: signals on that network at that tick
 
+TUI table output is truncated to at most 10 rows and 10 columns. When truncation happens,
+the CLI prints how many rows and columns were omitted.
+
 Use `--json` to suppress the table and print raw JSON instead.
 
 Example JSON output (`--json`) has a `ticks` array. Each tick contains every red and green network and its signals after that tick's combinator outputs have been published.

@@ -2,9 +2,9 @@ circuit: s-latch
   description: Channels - DATA_IN (input): red data bus sampled only while set is active; SET_IN (input): green control where non-zero "S" enables capture and zero enables hold; OUT (output): public red latched data via an isolation buffer.
 
 combinators:
-  DATA_IN: input medium-electric-pole
-  SET_IN: input medium-electric-pole
-  OUT: output medium-electric-pole
+  DATA_IN: io medium-electric-pole
+  SET_IN: io medium-electric-pole
+  OUT: io medium-electric-pole
   OUT_BUF: arithmetic
     each R + 0 -> each
   CAPTURE: decider
@@ -22,17 +22,17 @@ combinators:
 
 wires:
   network Data: red
-    DATA_IN out -> CAPTURE in
+    DATA_IN -> CAPTURE in
   network Set: green
-    SET_IN out -> CAPTURE in
-    SET_IN out -> HOLD in
+    SET_IN -> CAPTURE in
+    SET_IN -> HOLD in
   network State: red
     CAPTURE out -> HOLD in
     CAPTURE out -> OUT_BUF in
     HOLD out -> HOLD in
     HOLD out -> OUT_BUF in
   network PublicOut: red
-    OUT_BUF out -> OUT in
+    OUT_BUF out -> OUT
 
 tests:
   captures-while-set-high:

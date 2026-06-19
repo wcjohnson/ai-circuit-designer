@@ -2,10 +2,10 @@ circuit: timer
   description: Channels - WAIT_IN (input): red W gate, non-zero while waiting should accumulate; RESET_IN (input): green R reset gate, non-zero forces wait gate off; TIMEOUT_IN (input): green H threshold signal that defines when timeout should fire; OUT (output): red O asserted when wait has been continuous long enough.
 
 combinators:
-  WAIT_IN: input medium-electric-pole
-  RESET_IN: input medium-electric-pole
-  TIMEOUT_IN: input medium-electric-pole
-  OUT: output medium-electric-pole
+  WAIT_IN: io medium-electric-pole
+  RESET_IN: io medium-electric-pole
+  TIMEOUT_IN: io medium-electric-pole
+  OUT: io medium-electric-pole
   WAIT_GATE: decider
     conditions:
       "W" R != 0
@@ -30,12 +30,12 @@ combinators:
 
 wires:
   network WaitIn: red
-    WAIT_IN out -> WAIT_GATE in
+    WAIT_IN -> WAIT_GATE in
   network Reset: green
-    RESET_IN out -> WAIT_GATE in
+    RESET_IN -> WAIT_GATE in
   network TimeoutIn: green
-    TIMEOUT_IN out -> TIMEOUT in
-    TIMEOUT_IN out -> STEP_GATE in
+    TIMEOUT_IN -> TIMEOUT in
+    TIMEOUT_IN -> STEP_GATE in
   network WaitKeep: green
     WAIT_GATE out -> MASK in
     WAIT_GATE out -> STEP_GATE in
@@ -48,7 +48,7 @@ wires:
   network CountNext: red
     INC out -> MASK in
   network PublicOut: red
-    TIMEOUT out -> OUT in
+    TIMEOUT out -> OUT
 
 tests:
   idle-has-no-timeout:

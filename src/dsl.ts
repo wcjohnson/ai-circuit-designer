@@ -50,7 +50,7 @@ export interface DslCompiledDocument {
   tests: DslTestDefinition[];
   networks: DslCompiledNetwork[];
   entities: Record<string, number>;
-  io?: Record<string, 'input' | 'output'>;
+  io?: Record<string, 'io'>;
 }
 
 export interface DslAssertionResult {
@@ -73,13 +73,14 @@ export interface DslTestRunResult {
   tests: DslTestResult[];
 }
 
-type CombinatorKind = 'constant' | 'arithmetic' | 'decider' | 'selector' | 'pole' | 'input' | 'output' | 'circuit';
+type CombinatorKind = 'constant' | 'arithmetic' | 'decider' | 'selector' | 'pole' | 'io' | 'circuit';
 type PortDirection = 'in' | 'out';
 
 interface ParsedWireEndpoint {
   combinatorId: string;
   port: PortDirection;
   subIoId?: string;
+  hasExplicitPort: boolean;
 }
 
 interface ParsedCircuitInfo {
@@ -187,7 +188,7 @@ interface DslApplyIoSignalAction {
   tick: number;
   signal: SignalID;
   value: number;
-  side: 'input' | 'output';
+  side: 'input' | 'output' | 'io';
   combinatorId: string;
   wire: WireColor;
 }
@@ -197,7 +198,7 @@ interface DslApplyIoSignalContinuousAction {
   tick: number;
   signal: SignalID;
   value: number;
-  side: 'input' | 'output';
+  side: 'input' | 'output' | 'io';
   combinatorId: string;
   wire: WireColor;
 }
@@ -215,7 +216,7 @@ interface DslAssertIoSignalAction {
   tick: number;
   signal: SignalID;
   value: number;
-  side: 'input' | 'output';
+  side: 'input' | 'output' | 'io';
   combinatorId: string;
   wire: WireColor;
 }
@@ -270,9 +271,9 @@ export function compileDsl(source: string, options: DslCompileOptions = {}): Dsl
   const { blueprint, compiledNetworks, entityNumberById } = compileBlueprint(expanded);
   const io = Object.fromEntries(
     expanded.combinators
-      .filter((combinator) => combinator.kind === 'input' || combinator.kind === 'output')
-      .map((combinator) => [combinator.id, combinator.kind])
-  ) as Record<string, 'input' | 'output'>;
+      .filter((combinator) => combinator.kind === 'io')
+      .map((combinator) => [combinator.id, 'io'])
+  ) as Record<string, 'io'>;
 
   return {
     blueprint,
@@ -298,7 +299,7 @@ export function runDslTests(sourceOrCompiled: string | DslCompiledDocument, opti
 
   const entityNumberById = new Map(Object.entries(compiled.entities).map(([id, value]) => [id, Number(value)]));
   const networkById = new Map(compiled.networks.map((network) => [network.id, network]));
-  const ioDirectionById = new Map(Object.entries(compiled.io ?? {}));
+  const ioById = new Map(Object.entries(compiled.io ?? {}));
   const baselineConstantSignals = readConstantSignalsByEntity(compiled.blueprint);
 
   const results: DslTestResult[] = testsToRun.map((test) => {
@@ -308,7 +309,7 @@ export function runDslTests(sourceOrCompiled: string | DslCompiledDocument, opti
       maxTick,
       networkById,
       entityNumberById,
-      ioDirectionById,
+      ioById,
       baselineConstantSignals
     );
     const state = createSimulationState(compiled.blueprint, { inputs: externalInputs });
@@ -321,7 +322,7 @@ export function runDslTests(sourceOrCompiled: string | DslCompiledDocument, opti
       ignoredEntities: [...state.ignoredEntities]
     };
 
-    const assertions = evaluateAssertions(test, simulation, networkById, entityNumberById, ioDirectionById);
+    const assertions = evaluateAssertions(test, simulation, networkById, entityNumberById, ioById);
     return {
       name: test.name,
       passed: assertions.every((assertion) => assertion.passed),
@@ -466,14 +467,20 @@ function createCombinatorDeclaration(id: string, typeSpec: string, line: number)
     if (!poleName) {
       throw new Error(`Line ${line}: pole declaration must include a pole entity name.`);
     }
+  } else if (normalized.startsWith('io ')) {
+    kind = 'io';
+    poleName = typeSpec.slice('io '.length).trim();
+    if (!poleName) {
+      throw new Error(`Line ${line}: io declaration must include a pole entity name.`);
+    }
   } else if (normalized.startsWith('input ')) {
-    kind = 'input';
+    kind = 'io';
     poleName = typeSpec.slice('input '.length).trim();
     if (!poleName) {
       throw new Error(`Line ${line}: input declaration must include a pole entity name.`);
     }
   } else if (normalized.startsWith('output ')) {
-    kind = 'output';
+    kind = 'io';
     poleName = typeSpec.slice('output '.length).trim();
     if (!poleName) {
       throw new Error(`Line ${line}: output declaration must include a pole entity name.`);
@@ -634,22 +641,32 @@ function parseWireEdge(text: string, line: number): ParsedWireEdge {
 
 function parseWireEndpoint(text: string, line: number, side: 'from' | 'to'): ParsedWireEndpoint {
   const parts = text.split(/\s+/).filter(Boolean);
+  if (parts.length === 1) {
+    return {
+      combinatorId: parts[0],
+      port: side === 'from' ? 'out' : 'in',
+      hasExplicitPort: false
+    };
+  }
+
   if (parts.length !== 2) {
-    throw new Error(`Line ${line}: wire ${side} endpoint must be '<id> <in|out>' or '<subcircuit-id> <io-id>'.`);
+    throw new Error(`Line ${line}: wire ${side} endpoint must be '<id>', '<id> <in|out>', or '<subcircuit-id> <io-id>'.`);
   }
 
   const second = parts[1];
   if (second === 'in' || second === 'out') {
     return {
       combinatorId: parts[0],
-      port: second as PortDirection
+      port: second as PortDirection,
+      hasExplicitPort: true
     };
   }
 
   return {
     combinatorId: parts[0],
     subIoId: parts[1],
-    port: side === 'from' ? 'out' : 'in'
+    port: side === 'from' ? 'out' : 'in',
+    hasExplicitPort: true
   };
 }
 
@@ -754,14 +771,14 @@ function parseTestActions(lines: SourceLine[], testName: string): DslTestAction[
 }
 
 function parseSingleTickAction(text: string, line: number, tick: number): DslTestAction {
-  const applyIoContinuousMatch = /^apply\s+signal\s+(.+?)\s*=\s*(-?\d+)\s+to\s+(input|output)\s+(.+?)\s+(red|green)\s+continuously$/i.exec(text);
+  const applyIoContinuousMatch = /^apply\s+signal\s+(.+?)\s*=\s*(-?\d+)\s+to\s+(input|output|io)\s+(.+?)\s+(red|green)\s+continuously$/i.exec(text);
   if (applyIoContinuousMatch) {
     return {
       kind: 'apply-io-signal-continuous',
       tick,
       signal: parseSignalToken(applyIoContinuousMatch[1], line),
       value: Number(applyIoContinuousMatch[2]),
-      side: applyIoContinuousMatch[3].toLowerCase() as 'input' | 'output',
+      side: applyIoContinuousMatch[3].toLowerCase() as 'input' | 'output' | 'io',
       combinatorId: applyIoContinuousMatch[4].trim(),
       wire: applyIoContinuousMatch[5].toLowerCase() as WireColor
     };
@@ -789,14 +806,14 @@ function parseSingleTickAction(text: string, line: number, tick: number): DslTes
     };
   }
 
-  const applyIoMatch = /^apply\s+signal\s+(.+?)\s*=\s*(-?\d+)\s+to\s+(input|output)\s+(.+?)\s+(red|green)$/i.exec(text);
+  const applyIoMatch = /^apply\s+signal\s+(.+?)\s*=\s*(-?\d+)\s+to\s+(input|output|io)\s+(.+?)\s+(red|green)$/i.exec(text);
   if (applyIoMatch) {
     return {
       kind: 'apply-io-signal',
       tick,
       signal: parseSignalToken(applyIoMatch[1], line),
       value: Number(applyIoMatch[2]),
-      side: applyIoMatch[3].toLowerCase() as 'input' | 'output',
+      side: applyIoMatch[3].toLowerCase() as 'input' | 'output' | 'io',
       combinatorId: applyIoMatch[4].trim(),
       wire: applyIoMatch[5].toLowerCase() as WireColor
     };
@@ -825,14 +842,14 @@ function parseSingleTickAction(text: string, line: number, tick: number): DslTes
     };
   }
 
-  const assertIoMatch = /^assert\s+signal\s+(.+?)\s*=\s*(-?\d+)\s+on\s+(input|output)\s+(.+?)\s+(red|green)$/i.exec(text);
+  const assertIoMatch = /^assert\s+signal\s+(.+?)\s*=\s*(-?\d+)\s+on\s+(input|output|io)\s+(.+?)\s+(red|green)$/i.exec(text);
   if (assertIoMatch) {
     return {
       kind: 'assert-io-signal',
       tick,
       signal: parseSignalToken(assertIoMatch[1], line),
       value: Number(assertIoMatch[2]),
-      side: assertIoMatch[3].toLowerCase() as 'input' | 'output',
+      side: assertIoMatch[3].toLowerCase() as 'input' | 'output' | 'io',
       combinatorId: assertIoMatch[4].trim(),
       wire: assertIoMatch[5].toLowerCase() as WireColor
     };
@@ -906,6 +923,12 @@ function compileBlueprint(parsed: ParsedDslDocument): {
       const targetEntityNumber = resolveCombinatorReference(edge.to.combinatorId, entityNumberById);
       const sourceKind = resolveCombinatorKind(edge.from.combinatorId, kindById);
       const targetKind = resolveCombinatorKind(edge.to.combinatorId, kindById);
+      if (isTwoSidedCombinator(sourceKind) && !edge.from.hasExplicitPort) {
+        throw new Error(`Wire network '${network.id}' endpoint '${edge.from.combinatorId}' must specify 'in' or 'out'.`);
+      }
+      if (isTwoSidedCombinator(targetKind) && !edge.to.hasExplicitPort) {
+        throw new Error(`Wire network '${network.id}' endpoint '${edge.to.combinatorId}' must specify 'in' or 'out'.`);
+      }
       const sourceConnectorId = connectorPointId(sourceKind, edge.from.port);
       const targetConnectorId = connectorPointId(targetKind, edge.to.port);
 
@@ -1090,7 +1113,7 @@ function buildExternalInputsForTest(
   maxTick: number,
   networkById: Map<string, DslCompiledNetwork>,
   entityNumberById: Map<string, number>,
-  ioDirectionById: Map<string, 'input' | 'output'>,
+  ioById: Map<string, 'io'>,
   baselineSignals: Map<number, SignalMap>
 ): ExternalInput[] {
   const actionsByTick = new Map<number, DslTestAction[]>();
@@ -1130,7 +1153,7 @@ function buildExternalInputsForTest(
             action.wire,
             networkById,
             entityNumberById,
-            ioDirectionById
+            ioById
           );
         }
 
@@ -1203,7 +1226,7 @@ function evaluateAssertions(
   simulation: SimulationResult,
   networkById: Map<string, DslCompiledNetwork>,
   entityNumberById: Map<string, number>,
-  ioDirectionById: Map<string, 'input' | 'output'>
+  ioById: Map<string, 'io'>
 ): DslAssertionResult[] {
   const assertions: DslAssertionResult[] = [];
 
@@ -1249,7 +1272,7 @@ function evaluateAssertions(
           action.wire,
           networkById,
           entityNumberById,
-          ioDirectionById
+          ioById
         );
       }
 
@@ -1329,19 +1352,15 @@ function describeAssertion(action: DslAssertNetworkSignalAction | DslAssertIoSig
 function resolveIoNetworkTarget(
   testName: string,
   tick: number,
-  side: 'input' | 'output',
+  side: 'input' | 'output' | 'io',
   combinatorId: string,
   wire: WireColor,
   networkById: Map<string, DslCompiledNetwork>,
   entityNumberById: Map<string, number>,
-  ioDirectionById: Map<string, 'input' | 'output'>
+  ioById: Map<string, 'io'>
 ): DslCompiledNetwork {
-  const direction = ioDirectionById.get(combinatorId);
-  if (!direction) {
+  if (!ioById.get(combinatorId)) {
     throw new Error(`Test '${testName}' tick ${tick} references unknown named ${side} '${combinatorId}'.`);
-  }
-  if (direction !== side) {
-    throw new Error(`Test '${testName}' tick ${tick} references ${side} '${combinatorId}', but it is declared as ${direction}.`);
   }
 
   const entityNumber = resolveCombinatorReference(combinatorId, entityNumberById);
@@ -1714,8 +1733,12 @@ function makeBlueprintWire(
   ];
 }
 
+function isTwoSidedCombinator(kind: CombinatorKind): boolean {
+  return kind === 'arithmetic' || kind === 'decider' || kind === 'selector';
+}
+
 function wireConnectorId(kind: CombinatorKind, port: PortDirection, color: WireColor) {
-  const twoSided = kind === 'arithmetic' || kind === 'decider' || kind === 'selector';
+  const twoSided = isTwoSidedCombinator(kind);
   if (!twoSided) {
     return color === 'red' ? WIRE_CONNECTOR_ID.circuitRed : WIRE_CONNECTOR_ID.circuitGreen;
   }
@@ -1728,7 +1751,7 @@ function wireConnectorId(kind: CombinatorKind, port: PortDirection, color: WireC
 }
 
 function connectorPointId(kind: CombinatorKind, port: PortDirection): number {
-  const twoSided = kind === 'arithmetic' || kind === 'decider' || kind === 'selector';
+  const twoSided = isTwoSidedCombinator(kind);
   if (!twoSided) {
     return 1;
   }
@@ -1890,7 +1913,7 @@ function inlineCircuit(
       id: expandedId
     };
     combinators.push(expandedCombinator);
-    if (combinator.kind === 'input' || combinator.kind === 'output') {
+    if (combinator.kind === 'io') {
       ioMap.set(combinator.id, expandedId);
     }
   }
@@ -1927,12 +1950,14 @@ function resolveExpandedEndpoint(
     }
     return {
       combinatorId: resolved,
-      port: endpoint.port
+      port: endpoint.port,
+      hasExplicitPort: endpoint.hasExplicitPort
     };
   }
 
   return {
     combinatorId: `${prefix}${endpoint.combinatorId}`,
-    port: endpoint.port
+    port: endpoint.port,
+    hasExplicitPort: endpoint.hasExplicitPort
   };
 }

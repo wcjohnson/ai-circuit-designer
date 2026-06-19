@@ -73,7 +73,7 @@ combinators:
 
 wires:
   network In: red
-    P out -> C in
+    P -> C in
 
 tests:
   continuous-apply:
@@ -93,27 +93,27 @@ tests:
   assert.equal(result.tests[0]?.passed, true);
 });
 
-test('runDslTests supports apply/assert on named inputs and outputs', () => {
+test('runDslTests supports apply/assert on named io poles', () => {
   const source = `
 combinators:
-  SRC: input medium-electric-pole
+  SRC: io medium-electric-pole
   AMP: arithmetic
     "A" R * 2 -> "B"
-  SINK: output medium-electric-pole
+  SINK: io medium-electric-pole
 
 wires:
   network InputNet: red
-    SRC out -> AMP in
+    SRC -> AMP in
   network OutputNet: red
-    AMP out -> SINK in
+    AMP out -> SINK
 
 tests:
   io-targets:
     tick 0:
-      apply signal "A" = 3 to input SRC red continuously
+      apply signal "A" = 3 to io SRC red continuously
     tick 2:
-      assert signal "A" = 3 on input SRC red
-      assert signal "B" = 6 on output SINK red
+      assert signal "A" = 3 on io SRC red
+      assert signal "B" = 6 on io SINK red
 `;
 
   const result = runDslTests(source);
@@ -122,24 +122,24 @@ tests:
   assert.equal(result.tests[0]?.passed, true);
 });
 
-test('runDslTests requires explicit wire color on input/output apply/assert actions', () => {
+test('runDslTests requires explicit wire color on io apply/assert actions', () => {
   const source = `
 combinators:
-  SRC: input medium-electric-pole
+  SRC: io medium-electric-pole
   AMP: arithmetic
     "A" R * 2 -> "B"
-  SINK: output medium-electric-pole
+  SINK: io medium-electric-pole
 
 wires:
   network InputNet: red
-    SRC out -> AMP in
+    SRC -> AMP in
   network OutputNet: red
-    AMP out -> SINK in
+    AMP out -> SINK
 
 tests:
   missing-color:
     tick 0:
-      apply signal "A" = 3 to input SRC continuously
+      apply signal "A" = 3 to io SRC continuously
 `;
 
   assert.throws(
@@ -202,16 +202,16 @@ test('compileDsl inlines imported subcircuit endpoints', () => {
 circuit: child
 
 combinators:
-  IN: input medium-electric-pole
-  OUT: output medium-electric-pole
+  IN: io medium-electric-pole
+  OUT: io medium-electric-pole
   G: arithmetic
     "A" RG * 2 -> "B"
 
 wires:
   network CIN: red
-    IN out -> G in
+    IN -> G in
   network COUT: red
-    G out -> OUT in
+    G out -> OUT
 `, 'utf8');
 
     writeFileSync(rootPath, `
@@ -319,7 +319,7 @@ test('compileDsl fails when subcircuit endpoint does not exist', () => {
 circuit: child
 
 combinators:
-  IN: input medium-electric-pole
+  IN: io medium-electric-pole
 `, 'utf8');
 
     const source = `
@@ -343,5 +343,23 @@ wires:
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('compileDsl requires explicit in/out on two-sided combinators', () => {
+  const source = `
+combinators:
+  P: pole medium-electric-pole
+  A: arithmetic
+    "A" R * 1 -> "A"
+
+wires:
+  network N: red
+    P -> A
+`;
+
+  assert.throws(
+    () => compileDsl(source),
+    /must specify 'in' or 'out'/
+  );
 });
 
