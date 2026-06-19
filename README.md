@@ -33,6 +33,14 @@ This project has no runtime dependencies. TypeScript is used at build time and e
 node dist/src/cli.js --input examples/constant.json --ticks 3
 ```
 
+## Circuit File Conventions
+
+- Circuit source files live in `circuits/`.
+- Circuit DSL extension is `.circuit-dsl`.
+- Compiling `circuits/X.circuit-dsl` writes:
+  - `circuits/X.blueprint.json`
+  - `circuits/X.blueprint.txt`
+
 You can also pass a compressed blueprint string directly:
 
 ```bash

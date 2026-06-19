@@ -9,6 +9,11 @@ user-invocable: true
 
 Generate a complete DSL circuit design from a human behavior description.
 
+File and output conventions:
+- Store all circuit designs under `circuits/`.
+- Circuit DSL extension is `.circuit-dsl`.
+- For `circuits/X.circuit-dsl`, compiled outputs are `circuits/X.blueprint.json` and `circuits/X.blueprint.txt`.
+
 Output includes:
 - `combinators:` section
 - `wires:` section
@@ -97,6 +102,10 @@ Assumption policy:
   - Add `--inputs <path>` when targeted external input injection is needed.
   - Add `--include-blueprint` when you need to inspect compiled entity/wire output while reasoning.
 - Prefer `simulate-dsl` for rapid behavior checks before or alongside `test` assertions.
+
+9. Persist artifacts with canonical paths.
+- Write the design file to `circuits/<name>.circuit-dsl`.
+- Compile so outputs land at `circuits/<name>.blueprint.json` and `circuits/<name>.blueprint.txt`.
 
 ## Decision Rules
 

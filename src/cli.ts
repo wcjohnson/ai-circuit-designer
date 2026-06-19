@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { readFile, writeFile } from 'node:fs/promises';
+import { dirname, join, parse as parsePath } from 'node:path';
 import { stdin as inputStream } from 'node:process';
 import { inflateSync } from 'node:zlib';
 import { simulateBlueprint } from './simulator.js';
@@ -119,19 +120,22 @@ try {
 
   const dslSource = await readDslSource(options.dslPath);
   if (options.command === 'compile') {
+    const defaultOutputPaths = getDefaultCompileOutputPaths(options.dslPath);
+    const outputBlueprintJsonPath = options.outputBlueprintJsonPath ?? defaultOutputPaths?.jsonPath;
+    const outputBlueprintStringPath = options.outputBlueprintStringPath ?? defaultOutputPaths?.stringPath;
     const includeBlueprintString = options.includeBlueprintString || Boolean(options.outputBlueprintStringPath);
     const result = compileDsl(dslSource, {
-      includeBlueprintString
+      includeBlueprintString: includeBlueprintString || Boolean(outputBlueprintStringPath)
     });
 
-    if (options.outputBlueprintJsonPath) {
+    if (outputBlueprintJsonPath) {
       const blueprintJson = writeBlueprintJson(result.blueprint, { pretty: options.pretty });
-      await writeFile(options.outputBlueprintJsonPath, blueprintJson, 'utf8');
+      await writeFile(outputBlueprintJsonPath, blueprintJson, 'utf8');
     }
 
-    if (options.outputBlueprintStringPath) {
+    if (outputBlueprintStringPath) {
       const blueprintString = result.blueprintString ?? writeBlueprintString(result.blueprint);
-      await writeFile(options.outputBlueprintStringPath, blueprintString, 'utf8');
+      await writeFile(outputBlueprintStringPath, blueprintString, 'utf8');
     }
 
     printJson(result, options.pretty);
@@ -481,6 +485,7 @@ function printHelp(): void {
       '      --with-blueprint-string  Include encoded blueprint string in output',
       '      --out-json <path>        Write compiled blueprint JSON to a file',
       '      --out-string <path>      Write compiled blueprint string to a file',
+      '                               Default for <name>.circuit-dsl: <name>.blueprint.json/.txt',
       '',
       'test options:',
       '  -d, --dsl <path>       Read DSL source file (or stdin when omitted)',
@@ -496,6 +501,28 @@ function printHelp(): void {
       '  -h, --help             Show this help'
     ].join('\n')
   );
+}
+
+function getDefaultCompileOutputPaths(dslPath: string | undefined): { jsonPath: string; stringPath: string } | undefined {
+  if (!dslPath) {
+    return undefined;
+  }
+
+  const path = dslPath.trim();
+  if (!path.endsWith('.circuit-dsl')) {
+    return undefined;
+  }
+
+  const parsed = parsePath(path);
+  const stem = parsed.base.slice(0, -'.circuit-dsl'.length);
+  if (!stem) {
+    return undefined;
+  }
+
+  return {
+    jsonPath: join(dirname(path), `${stem}.blueprint.json`),
+    stringPath: join(dirname(path), `${stem}.blueprint.txt`)
+  };
 }
 
 function renderDslTestTables(result: ReturnType<typeof runDslTests>): string {
