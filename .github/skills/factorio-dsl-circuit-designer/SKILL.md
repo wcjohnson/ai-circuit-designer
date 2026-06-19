@@ -76,6 +76,14 @@ Assumption policy:
 - Use `apply signal` for network stimuli.
 - Use `set constant combinator ... signals:` for staged fixture changes.
 - Assert at the correct tick accounting for N -> N+1 combinator output delay.
+- Include output-pollution tests in all circuit designs: simulate unknown external signals applied on public/output-facing networks and verify internal state networks are not corrupted.
+
+6a. Output back-propagation hardening workflow (required for every new circuit design).
+- First, design and run output-pollution tests to determine whether external/public-wire back-propagation can corrupt internal state.
+- Only if those tests indicate harmful pollution risk, add identity buffer combinators before public outputs.
+- Identity buffer pattern: arithmetic combinator with `each + 0 -> each`.
+- Place the identity buffer between internal-state/output-generation network and externally exposed output network.
+- After adding the identity buffer, keep or extend the pollution tests so they explicitly prove internal-state isolation.
 
 7. Self-audit before finalizing.
 - Check IDs referenced by wires/tests exist.
@@ -98,6 +106,9 @@ Assumption policy:
   - Use `every = input [R|G|RG]` when the intent is to forward all incoming signals from a selected wire set.
   - Do not use `each = input ...` unless the decider condition semantics are explicitly each-based on the LHS.
 - If ranking/indexing/counting/filtering/quality behavior is requested: selector.
+- For circuits with internal state or feedback that may connect to unknown external circuitry:
+  - Always include output-pollution tests.
+  - Add identity output buffers only when those tests indicate harmful pollution risk.
 - If request is ambiguous about tick timing:
   - Default assertions to first tick where outputs are observable.
   - Note timing assumption.
