@@ -1,21 +1,21 @@
 circuit: s-latch
-  description: Channels - DATA_IN (input): red data bus sampled only while set is active; SET_IN (input): green control where non-zero "signal-S" enables capture and zero enables hold; OUT (output): public red latched data via an isolation buffer.
+  description: Channels - DATA_IN (input): red data bus sampled only while set is active; SET_IN (input): green control where non-zero "S" enables capture and zero enables hold; OUT (output): public red latched data via an isolation buffer.
 
 combinators:
   DATA_IN: input medium-electric-pole
   SET_IN: input medium-electric-pole
   OUT: output medium-electric-pole
   OUT_BUF: arithmetic
-    expression: each R + 0 -> each
+    each R + 0 -> each
   CAPTURE: decider
     conditions:
-      "signal-S" G != 0
+      "S" G != 0
       AND anything R != 0
     outputs:
       every = input R
   HOLD: decider
     conditions:
-      "signal-S" G = 0
+      "S" G = 0
       AND anything R != 0
     outputs:
       every = input R
@@ -37,87 +37,88 @@ wires:
 tests:
   captures-while-set-high:
     tick 0:
-      apply signal "signal-S" = 1 to network Set
-      apply signal "signal-A" = 3 to network Data
+      apply signal "S" = 1 to input SET_IN green
+      apply signal "A" = 3 to input DATA_IN red
     tick 1:
-      assert signal "signal-A" = 3 on network State
-      apply signal "signal-S" = 1 to network Set
-      apply signal "signal-A" = 7 to network Data
+      assert signal "A" = 3 on network State
+      apply signal "S" = 1 to input SET_IN green
+      apply signal "A" = 7 to input DATA_IN red
     tick 2:
-      assert signal "signal-A" = 7 on network State
+      assert signal "A" = 7 on network State
 
   holds-when-set-low:
     tick 0:
-      apply signal "signal-S" = 1 to network Set
-      apply signal "signal-A" = 4 to network Data
+      apply signal "S" = 1 to input SET_IN green
+      apply signal "A" = 4 to input DATA_IN red
     tick 1:
-      assert signal "signal-A" = 4 on network State
+      assert signal "A" = 4 on network State
     tick 2:
-      assert signal "signal-A" = 4 on network State
+      assert signal "A" = 4 on network State
     tick 3:
-      assert signal "signal-A" = 4 on network State
+      assert signal "A" = 4 on network State
 
   low-set-does-not-capture-new-input:
     tick 0:
-      apply signal "signal-S" = 1 to network Set
-      apply signal "signal-A" = 5 to network Data
+      apply signal "S" = 1 to input SET_IN green
+      apply signal "A" = 5 to input DATA_IN red
     tick 1:
-      assert signal "signal-A" = 5 on network State
-      apply signal "signal-C" = 9 to network Data
+      assert signal "A" = 5 on network State
+      apply signal "C" = 9 to input DATA_IN red
     tick 2:
-      assert signal "signal-A" = 5 on network State
-      assert signal "signal-C" = 0 on network State
+      assert signal "A" = 5 on network State
+      assert signal "C" = 0 on network State
     tick 3:
-      assert signal "signal-A" = 5 on network State
-      assert signal "signal-C" = 0 on network State
+      assert signal "A" = 5 on network State
+      assert signal "C" = 0 on network State
 
   relatches-when-set-goes-high-again:
     tick 0:
-      apply signal "signal-S" = 1 to network Set
-      apply signal "signal-A" = 2 to network Data
+      apply signal "S" = 1 to input SET_IN green
+      apply signal "A" = 2 to input DATA_IN red
     tick 1:
-      assert signal "signal-A" = 2 on network State
+      assert signal "A" = 2 on network State
     tick 2:
-      apply signal "signal-S" = 1 to network Set
-      apply signal "signal-B" = 6 to network Data
+      apply signal "S" = 1 to input SET_IN green
+      apply signal "B" = 6 to input DATA_IN red
     tick 3:
-      assert signal "signal-B" = 6 on network State
-      assert signal "signal-A" = 0 on network State
+      assert signal "B" = 6 on network State
+      assert signal "A" = 0 on network State
 
   single-frame-set-pulse-captures-and-holds:
     tick 0:
-      apply signal "signal-S" = 1 to network Set
-      apply signal "signal-A" = 8 to network Data
+      apply signal "S" = 1 to input SET_IN green
+      apply signal "A" = 8 to input DATA_IN red
     tick 1:
-      assert signal "signal-A" = 8 on network State
-      apply signal "signal-A" = 1 to network Data
+      assert signal "A" = 8 on network State
+      apply signal "A" = 1 to input DATA_IN red
     tick 2:
-      assert signal "signal-A" = 8 on network State
+      assert signal "A" = 8 on network State
 
-  set-control-signal-not-on-output:
+  set-control-not-on-output:
     tick 0:
-      apply signal "signal-S" = 1 to network Set
-      apply signal "signal-A" = 3 to network Data
+      apply signal "S" = 1 to input SET_IN green
+      apply signal "A" = 3 to input DATA_IN red
     tick 1:
-      assert signal "signal-S" = 0 on network State
+      assert signal "S" = 0 on network State
     tick 2:
-      assert signal "signal-S" = 0 on network State
+      assert signal "S" = 0 on network State
 
   output-pollution-does-not-corrupt-state:
     tick 0:
-      apply signal "signal-S" = 1 to network Set
-      apply signal "signal-A" = 4 to network Data
+      apply signal "S" = 1 to input SET_IN green
+      apply signal "A" = 4 to input DATA_IN red
     tick 1:
-      assert signal "signal-A" = 4 on network State
-      apply signal "signal-X" = 99 to network PublicOut
+      assert signal "A" = 4 on network State
+      apply signal "X" = 99 to output OUT red
     tick 2:
-      assert signal "signal-A" = 4 on network State
-      assert signal "signal-X" = 0 on network State
+      assert signal "A" = 4 on network State
+      assert signal "X" = 0 on network State
 
   no-set-no-output:
     tick 0:
-      apply signal "signal-A" = 5 to network Data
+      apply signal "A" = 5 to input DATA_IN red
     tick 1:
-      assert signal "signal-A" = 0 on network State
+      assert signal "A" = 0 on network State
     tick 2:
-      assert signal "signal-A" = 0 on network State
+      assert signal "A" = 0 on network State
+

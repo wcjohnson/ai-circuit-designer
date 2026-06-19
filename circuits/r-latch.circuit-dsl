@@ -1,38 +1,38 @@
 circuit: r-latch
-  description: Channels - SIG_IN (input): red data bus to be latched when not reset; RESET_IN (input): green control where non-zero "signal-R" clears and blocks latch updates while high; OUT (output): public red latched data view with lock marker containment.
+  description: Channels - SIG_IN (input): red data bus to be latched when not reset; RESET_IN (input): green control where non-zero "R" clears and blocks latch updates while high; OUT (output): public red latched data view with lock marker containment.
 
 combinators:
   SIG_IN: input medium-electric-pole
   RESET_IN: input medium-electric-pole
   OUT: output medium-electric-pole
   OUT_BUF: arithmetic
-    expression: each R + 0 -> each
+    each R + 0 -> each
   CAPTURE: decider
     conditions:
-      "signal-R" G = 0
-      AND "signal-L" G = 0
+      "R" G = 0
+      AND "L" G = 0
       AND anything R != 0
     outputs:
       every = input R
   HOLD: decider
     conditions:
-      "signal-R" G = 0
+      "R" G = 0
       AND anything R != 0
     outputs:
       every = input R
   MARK_SET: decider
     conditions:
-      "signal-R" G = 0
-      AND "signal-L" G = 0
+      "R" G = 0
+      AND "L" G = 0
       AND anything R != 0
     outputs:
-      "signal-L" = 1
+      "L" = 1
   MARK_HOLD: decider
     conditions:
-      "signal-R" G = 0
-      AND "signal-L" G != 0
+      "R" G = 0
+      AND "L" G != 0
     outputs:
-      "signal-L" = 1
+      "L" = 1
 
 wires:
   network Signals: red
@@ -57,118 +57,119 @@ wires:
     MARK_HOLD out -> MARK_HOLD in
 
 tests:
-  capture-multi-signal-and-hold:
+  capture-multi-and-hold:
     tick 0:
-      apply signal "signal-A" = 5 to network Signals
-      apply signal "signal-B" = 2 to network Signals
+      apply signal "A" = 5 to input SIG_IN red
+      apply signal "B" = 2 to input SIG_IN red
     tick 1:
-      assert signal "signal-A" = 5 on network Latch
-      assert signal "signal-B" = 2 on network Latch
+      assert signal "A" = 5 on network Latch
+      assert signal "B" = 2 on network Latch
     tick 3:
-      assert signal "signal-A" = 5 on network Latch
-      assert signal "signal-B" = 2 on network Latch
+      assert signal "A" = 5 on network Latch
+      assert signal "B" = 2 on network Latch
 
   reset-clears-and-stays-cleared-while-high:
     tick 0:
-      apply signal "signal-A" = 9 to network Signals
+      apply signal "A" = 9 to input SIG_IN red
     tick 1:
-      assert signal "signal-A" = 9 on network Latch
-      apply signal "signal-R" = 1 to network Reset
+      assert signal "A" = 9 on network Latch
+      apply signal "R" = 1 to input RESET_IN green
     tick 2:
-      assert signal "signal-A" = 0 on network Latch
-      apply signal "signal-R" = 1 to network Reset
+      assert signal "A" = 0 on network Latch
+      apply signal "R" = 1 to input RESET_IN green
     tick 3:
-      assert signal "signal-A" = 0 on network Latch
-      apply signal "signal-R" = 1 to network Reset
+      assert signal "A" = 0 on network Latch
+      apply signal "R" = 1 to input RESET_IN green
 
   relatch-after-reset-release:
     tick 0:
-      apply signal "signal-A" = 4 to network Signals
+      apply signal "A" = 4 to input SIG_IN red
     tick 1:
-      apply signal "signal-R" = 1 to network Reset
+      apply signal "R" = 1 to input RESET_IN green
     tick 2:
-      assert signal "signal-A" = 0 on network Latch
+      assert signal "A" = 0 on network Latch
     tick 3:
-      apply signal "signal-C" = 6 to network Signals
+      apply signal "C" = 6 to input SIG_IN red
     tick 4:
-      assert signal "signal-C" = 6 on network Latch
-      assert signal "signal-A" = 0 on network Latch
+      assert signal "C" = 6 on network Latch
+      assert signal "A" = 0 on network Latch
 
   no-data-no-output:
     tick 2:
-      assert signal "signal-A" = 0 on network Latch
-      assert signal "signal-B" = 0 on network Latch
-      assert signal "signal-C" = 0 on network Latch
+      assert signal "A" = 0 on network Latch
+      assert signal "B" = 0 on network Latch
+      assert signal "C" = 0 on network Latch
 
   continuous-input-does-not-accumulate-or-overwrite-latch:
     tick 0:
-      apply signal "signal-A" = 5 to network Signals
+      apply signal "A" = 5 to input SIG_IN red
     tick 1:
-      apply signal "signal-A" = 5 to network Signals
-      assert signal "signal-A" = 5 on network Latch
+      apply signal "A" = 5 to input SIG_IN red
+      assert signal "A" = 5 on network Latch
     tick 2:
-      apply signal "signal-A" = 7 to network Signals
-      assert signal "signal-A" = 5 on network Latch
+      apply signal "A" = 7 to input SIG_IN red
+      assert signal "A" = 5 on network Latch
     tick 3:
-      apply signal "signal-C" = 9 to network Signals
-      assert signal "signal-A" = 5 on network Latch
-      assert signal "signal-C" = 0 on network Latch
+      apply signal "C" = 9 to input SIG_IN red
+      assert signal "A" = 5 on network Latch
+      assert signal "C" = 0 on network Latch
     tick 4:
-      apply signal "signal-C" = 9 to network Signals
-      assert signal "signal-A" = 5 on network Latch
-      assert signal "signal-C" = 0 on network Latch
+      apply signal "C" = 9 to input SIG_IN red
+      assert signal "A" = 5 on network Latch
+      assert signal "C" = 0 on network Latch
 
   marker-L-not-visible-or-growing-on-output:
     tick 0:
-      apply signal "signal-A" = 5 to network Signals
+      apply signal "A" = 5 to input SIG_IN red
     tick 1:
-      apply signal "signal-A" = 5 to network Signals
-      assert signal "signal-L" = 0 on network Latch
+      apply signal "A" = 5 to input SIG_IN red
+      assert signal "L" = 0 on network Latch
     tick 2:
-      apply signal "signal-A" = 5 to network Signals
-      assert signal "signal-L" = 0 on network Latch
+      apply signal "A" = 5 to input SIG_IN red
+      assert signal "L" = 0 on network Latch
     tick 3:
-      apply signal "signal-A" = 5 to network Signals
-      assert signal "signal-L" = 0 on network Latch
+      apply signal "A" = 5 to input SIG_IN red
+      assert signal "L" = 0 on network Latch
     tick 4:
-      assert signal "signal-L" = 0 on network Latch
+      assert signal "L" = 0 on network Latch
 
   marker-L-bounded-on-internal-lock-network:
     tick 0:
-      apply signal "signal-A" = 5 to network Signals
+      apply signal "A" = 5 to input SIG_IN red
     tick 1:
-      apply signal "signal-A" = 5 to network Signals
-      assert signal "signal-L" = 1 on network Lock
+      apply signal "A" = 5 to input SIG_IN red
+      assert signal "L" = 1 on network Lock
     tick 2:
-      apply signal "signal-A" = 5 to network Signals
-      assert signal "signal-L" = 1 on network Lock
+      apply signal "A" = 5 to input SIG_IN red
+      assert signal "L" = 1 on network Lock
     tick 3:
-      apply signal "signal-C" = 9 to network Signals
-      assert signal "signal-L" = 1 on network Lock
-      apply signal "signal-R" = 1 to network Reset
+      apply signal "C" = 9 to input SIG_IN red
+      assert signal "L" = 1 on network Lock
+      apply signal "R" = 1 to input RESET_IN green
     tick 4:
-      assert signal "signal-L" = 0 on network Lock
+      assert signal "L" = 0 on network Lock
 
   single-frame-reset-pulse-clears-latch:
     tick 0:
-      apply signal "signal-A" = 8 to network Signals
+      apply signal "A" = 8 to input SIG_IN red
     tick 1:
-      assert signal "signal-A" = 8 on network Latch
-      apply signal "signal-R" = 1 to network Reset
+      assert signal "A" = 8 on network Latch
+      apply signal "R" = 1 to input RESET_IN green
     tick 2:
-      assert signal "signal-A" = 0 on network Latch
+      assert signal "A" = 0 on network Latch
     tick 3:
-      assert signal "signal-A" = 0 on network Latch
+      assert signal "A" = 0 on network Latch
 
   output-pollution-does-not-corrupt-state:
     tick 0:
-      apply signal "signal-A" = 5 to network Signals
+      apply signal "A" = 5 to input SIG_IN red
     tick 1:
-      assert signal "signal-A" = 5 on network Latch
-      apply signal "signal-X" = 99 to network PublicOut
+      assert signal "A" = 5 on network Latch
+      apply signal "X" = 99 to output OUT red
     tick 2:
-      assert signal "signal-A" = 5 on network Latch
-      assert signal "signal-X" = 0 on network Latch
+      assert signal "A" = 5 on network Latch
+      assert signal "X" = 0 on network Latch
     tick 3:
-      assert signal "signal-A" = 5 on network Latch
-      assert signal "signal-X" = 0 on network Latch
+      assert signal "A" = 5 on network Latch
+      assert signal "X" = 0 on network Latch
+

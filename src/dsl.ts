@@ -38,6 +38,10 @@ export interface DslCompiledNetwork {
     entityNumber: number;
     connectorId: number;
   };
+  points: Array<{
+    entityNumber: number;
+    connectorId: number;
+  }>;
 }
 
 export interface DslCompiledDocument {
@@ -46,6 +50,7 @@ export interface DslCompiledDocument {
   tests: DslTestDefinition[];
   networks: DslCompiledNetwork[];
   entities: Record<string, number>;
+  io?: Record<string, 'input' | 'output'>;
 }
 
 export interface DslAssertionResult {
@@ -169,12 +174,50 @@ interface DslApplySignalAction {
   networkId: string;
 }
 
+interface DslApplySignalContinuousAction {
+  kind: 'apply-signal-continuous';
+  tick: number;
+  signal: SignalID;
+  value: number;
+  networkId: string;
+}
+
+interface DslApplyIoSignalAction {
+  kind: 'apply-io-signal';
+  tick: number;
+  signal: SignalID;
+  value: number;
+  side: 'input' | 'output';
+  combinatorId: string;
+  wire: WireColor;
+}
+
+interface DslApplyIoSignalContinuousAction {
+  kind: 'apply-io-signal-continuous';
+  tick: number;
+  signal: SignalID;
+  value: number;
+  side: 'input' | 'output';
+  combinatorId: string;
+  wire: WireColor;
+}
+
 interface DslAssertNetworkSignalAction {
   kind: 'assert-network-signal';
   tick: number;
   signal: SignalID;
   value: number;
   networkId: string;
+}
+
+interface DslAssertIoSignalAction {
+  kind: 'assert-io-signal';
+  tick: number;
+  signal: SignalID;
+  value: number;
+  side: 'input' | 'output';
+  combinatorId: string;
+  wire: WireColor;
 }
 
 interface DslAssertCombinatorSignalAction {
@@ -195,7 +238,11 @@ interface DslSetConstantSignalsAction {
 
 type DslTestAction =
   | DslApplySignalAction
+  | DslApplySignalContinuousAction
+  | DslApplyIoSignalAction
+  | DslApplyIoSignalContinuousAction
   | DslAssertNetworkSignalAction
+  | DslAssertIoSignalAction
   | DslAssertCombinatorSignalAction
   | DslSetConstantSignalsAction;
 
@@ -221,13 +268,19 @@ export function compileDsl(source: string, options: DslCompileOptions = {}): Dsl
   const registry = loadImportRegistry(parsed);
   const expanded = expandParsedDocument(parsed, registry);
   const { blueprint, compiledNetworks, entityNumberById } = compileBlueprint(expanded);
+  const io = Object.fromEntries(
+    expanded.combinators
+      .filter((combinator) => combinator.kind === 'input' || combinator.kind === 'output')
+      .map((combinator) => [combinator.id, combinator.kind])
+  ) as Record<string, 'input' | 'output'>;
 
   return {
     blueprint,
     blueprintString: options.includeBlueprintString ? writeBlueprintString(blueprint) : undefined,
     tests: expanded.tests,
     networks: compiledNetworks,
-    entities: Object.fromEntries(entityNumberById.entries())
+    entities: Object.fromEntries(entityNumberById.entries()),
+    io
   };
 }
 
@@ -245,11 +298,19 @@ export function runDslTests(sourceOrCompiled: string | DslCompiledDocument, opti
 
   const entityNumberById = new Map(Object.entries(compiled.entities).map(([id, value]) => [id, Number(value)]));
   const networkById = new Map(compiled.networks.map((network) => [network.id, network]));
+  const ioDirectionById = new Map(Object.entries(compiled.io ?? {}));
   const baselineConstantSignals = readConstantSignalsByEntity(compiled.blueprint);
 
   const results: DslTestResult[] = testsToRun.map((test) => {
     const maxTick = test.actions.reduce((current, action) => Math.max(current, action.tick), 0);
-    const externalInputs = buildExternalInputsForTest(test, maxTick, networkById, entityNumberById, baselineConstantSignals);
+    const externalInputs = buildExternalInputsForTest(
+      test,
+      maxTick,
+      networkById,
+      entityNumberById,
+      ioDirectionById,
+      baselineConstantSignals
+    );
     const state = createSimulationState(compiled.blueprint, { inputs: externalInputs });
     const ticks: SimulationResult['ticks'] = [];
     for (let tick = 0; tick <= maxTick; tick += 1) {
@@ -260,7 +321,7 @@ export function runDslTests(sourceOrCompiled: string | DslCompiledDocument, opti
       ignoredEntities: [...state.ignoredEntities]
     };
 
-    const assertions = evaluateAssertions(test, simulation, networkById, entityNumberById);
+    const assertions = evaluateAssertions(test, simulation, networkById, entityNumberById, ioDirectionById);
     return {
       name: test.name,
       passed: assertions.every((assertion) => assertion.passed),
@@ -693,6 +754,30 @@ function parseTestActions(lines: SourceLine[], testName: string): DslTestAction[
 }
 
 function parseSingleTickAction(text: string, line: number, tick: number): DslTestAction {
+  const applyIoContinuousMatch = /^apply\s+signal\s+(.+?)\s*=\s*(-?\d+)\s+to\s+(input|output)\s+(.+?)\s+(red|green)\s+continuously$/i.exec(text);
+  if (applyIoContinuousMatch) {
+    return {
+      kind: 'apply-io-signal-continuous',
+      tick,
+      signal: parseSignalToken(applyIoContinuousMatch[1], line),
+      value: Number(applyIoContinuousMatch[2]),
+      side: applyIoContinuousMatch[3].toLowerCase() as 'input' | 'output',
+      combinatorId: applyIoContinuousMatch[4].trim(),
+      wire: applyIoContinuousMatch[5].toLowerCase() as WireColor
+    };
+  }
+
+  const applyContinuousMatch = /^apply\s+signal\s+(.+?)\s*=\s*(-?\d+)\s+to\s+network\s+(.+?)\s+continuously$/i.exec(text);
+  if (applyContinuousMatch) {
+    return {
+      kind: 'apply-signal-continuous',
+      tick,
+      signal: parseSignalToken(applyContinuousMatch[1], line),
+      value: Number(applyContinuousMatch[2]),
+      networkId: applyContinuousMatch[3].trim()
+    };
+  }
+
   const applyMatch = /^apply\s+signal\s+(.+?)\s*=\s*(-?\d+)\s+to\s+network\s+(.+)$/i.exec(text);
   if (applyMatch) {
     return {
@@ -701,6 +786,19 @@ function parseSingleTickAction(text: string, line: number, tick: number): DslTes
       signal: parseSignalToken(applyMatch[1], line),
       value: Number(applyMatch[2]),
       networkId: applyMatch[3].trim()
+    };
+  }
+
+  const applyIoMatch = /^apply\s+signal\s+(.+?)\s*=\s*(-?\d+)\s+to\s+(input|output)\s+(.+?)\s+(red|green)$/i.exec(text);
+  if (applyIoMatch) {
+    return {
+      kind: 'apply-io-signal',
+      tick,
+      signal: parseSignalToken(applyIoMatch[1], line),
+      value: Number(applyIoMatch[2]),
+      side: applyIoMatch[3].toLowerCase() as 'input' | 'output',
+      combinatorId: applyIoMatch[4].trim(),
+      wire: applyIoMatch[5].toLowerCase() as WireColor
     };
   }
 
@@ -724,6 +822,19 @@ function parseSingleTickAction(text: string, line: number, tick: number): DslTes
       value: Number(assertCombinatorMatch[2]),
       side: assertCombinatorMatch[3].toLowerCase() as 'input' | 'output',
       combinatorId: assertCombinatorMatch[4].trim()
+    };
+  }
+
+  const assertIoMatch = /^assert\s+signal\s+(.+?)\s*=\s*(-?\d+)\s+on\s+(input|output)\s+(.+?)\s+(red|green)$/i.exec(text);
+  if (assertIoMatch) {
+    return {
+      kind: 'assert-io-signal',
+      tick,
+      signal: parseSignalToken(assertIoMatch[1], line),
+      value: Number(assertIoMatch[2]),
+      side: assertIoMatch[3].toLowerCase() as 'input' | 'output',
+      combinatorId: assertIoMatch[4].trim(),
+      wire: assertIoMatch[5].toLowerCase() as WireColor
     };
   }
 
@@ -772,15 +883,22 @@ function compileBlueprint(parsed: ParsedDslDocument): {
     }
 
     const firstEdge = network.edges[0];
-      const firstEntity = resolveCombinatorReference(firstEdge.from.combinatorId, entityNumberById);
-      const firstKind = resolveCombinatorKind(firstEdge.from.combinatorId, kindById);
+    const firstEntity = resolveCombinatorReference(firstEdge.from.combinatorId, entityNumberById);
+    const firstKind = resolveCombinatorKind(firstEdge.from.combinatorId, kindById);
+    const points = new Map<string, { entityNumber: number; connectorId: number }>();
+    const addPoint = (entityNumber: number, connectorId: number) => {
+      points.set(`${entityNumber}:${connectorId}`, { entityNumber, connectorId });
+    };
+
+    addPoint(firstEntity, connectorPointId(firstKind, firstEdge.from.port));
     compiledNetworks.push({
       id: network.id,
       color: network.color,
       representativePoint: {
         entityNumber: firstEntity,
-          connectorId: connectorPointId(firstKind, firstEdge.from.port)
-      }
+        connectorId: connectorPointId(firstKind, firstEdge.from.port)
+      },
+      points: []
     });
 
     for (const edge of network.edges) {
@@ -788,6 +906,11 @@ function compileBlueprint(parsed: ParsedDslDocument): {
       const targetEntityNumber = resolveCombinatorReference(edge.to.combinatorId, entityNumberById);
       const sourceKind = resolveCombinatorKind(edge.from.combinatorId, kindById);
       const targetKind = resolveCombinatorKind(edge.to.combinatorId, kindById);
+      const sourceConnectorId = connectorPointId(sourceKind, edge.from.port);
+      const targetConnectorId = connectorPointId(targetKind, edge.to.port);
+
+      addPoint(sourceEntityNumber, sourceConnectorId);
+      addPoint(targetEntityNumber, targetConnectorId);
 
       const wire = makeBlueprintWire(
         network.color,
@@ -803,6 +926,11 @@ function compileBlueprint(parsed: ParsedDslDocument): {
         wiresByEntity.set(sourceEntityNumber, []);
       }
       wiresByEntity.get(sourceEntityNumber)?.push(wire);
+    }
+
+    const compiledNetwork = compiledNetworks[compiledNetworks.length - 1];
+    if (compiledNetwork) {
+      compiledNetwork.points = Array.from(points.values());
     }
   }
 
@@ -827,13 +955,20 @@ function buildEntity(combinator: ParsedCombinator, entityNumber: number, index: 
   };
 
   if (combinator.kind === 'constant') {
-    const filters: BlueprintLogisticFilter[] = combinator.constants.map((entry, filterIndex) => ({
-      index: filterIndex + 1,
-      type: entry.signal.type,
-      name: entry.signal.name,
-      quality: entry.signal.quality,
-      count: entry.count
-    }));
+    const filters: BlueprintLogisticFilter[] = combinator.constants.map((entry, filterIndex) => {
+      const filter: BlueprintLogisticFilter = {
+        index: filterIndex + 1,
+        type: entry.signal.type,
+        name: entry.signal.name,
+        count: entry.count
+      };
+
+      if (entry.signal.quality) {
+        filter.quality = entry.signal.quality;
+      }
+
+      return filter;
+    });
 
     const entity: ConstantCombinatorEntity = {
       ...base,
@@ -955,6 +1090,7 @@ function buildExternalInputsForTest(
   maxTick: number,
   networkById: Map<string, DslCompiledNetwork>,
   entityNumberById: Map<string, number>,
+  ioDirectionById: Map<string, 'input' | 'output'>,
   baselineSignals: Map<number, SignalMap>
 ): ExternalInput[] {
   const actionsByTick = new Map<number, DslTestAction[]>();
@@ -966,16 +1102,36 @@ function buildExternalInputsForTest(
   }
 
   const overrideSignals = new Map<number, SignalMap>();
+  const continuousSignals = new Map<string, { network: DslCompiledNetwork; signalKey: string; value: number }>();
   const inputs: ExternalInput[] = [];
 
   for (let tick = 0; tick <= maxTick; tick += 1) {
     const actions = actionsByTick.get(tick) ?? [];
 
     for (const action of actions) {
-      if (action.kind === 'apply-signal') {
-        const network = networkById.get(action.networkId);
-        if (!network) {
-          throw new Error(`Test '${test.name}' references unknown network '${action.networkId}'.`);
+      if (
+        action.kind === 'apply-signal'
+        || action.kind === 'apply-signal-continuous'
+        || action.kind === 'apply-io-signal'
+        || action.kind === 'apply-io-signal-continuous'
+      ) {
+        let network: DslCompiledNetwork | undefined;
+        if (action.kind === 'apply-signal' || action.kind === 'apply-signal-continuous') {
+          network = networkById.get(action.networkId);
+          if (!network) {
+            throw new Error(`Test '${test.name}' references unknown network '${action.networkId}'.`);
+          }
+        } else {
+          network = resolveIoNetworkTarget(
+            test.name,
+            action.tick,
+            action.side,
+            action.combinatorId,
+            action.wire,
+            networkById,
+            entityNumberById,
+            ioDirectionById
+          );
         }
 
         const key = signalKey(action.signal);
@@ -983,13 +1139,26 @@ function buildExternalInputsForTest(
           throw new Error(`Test '${test.name}' tick ${tick} apply action has invalid signal.`);
         }
 
-        inputs.push({
-          tick,
-          entityId: network.representativePoint.entityNumber,
-          connectorId: network.representativePoint.connectorId,
-          wire: network.color,
-          signals: { [key]: action.value }
-        });
+        if (action.kind === 'apply-signal' || action.kind === 'apply-io-signal') {
+          inputs.push({
+            tick,
+            entityId: network.representativePoint.entityNumber,
+            connectorId: network.representativePoint.connectorId,
+            wire: network.color,
+            signals: { [key]: action.value }
+          });
+        } else {
+          const continuousKey = `${network.id}|${key}`;
+          if (action.value === 0) {
+            continuousSignals.delete(continuousKey);
+          } else {
+            continuousSignals.set(continuousKey, {
+              network,
+              signalKey: key,
+              value: action.value
+            });
+          }
+        }
       } else if (action.kind === 'set-constant-signals') {
         const entityNumber = resolveCombinatorReference(action.combinatorId, entityNumberById);
         const nextSignals: SignalMap = {};
@@ -1002,6 +1171,16 @@ function buildExternalInputsForTest(
         }
         overrideSignals.set(entityNumber, nextSignals);
       }
+    }
+
+    for (const continuous of continuousSignals.values()) {
+      inputs.push({
+        tick,
+        entityId: continuous.network.representativePoint.entityNumber,
+        connectorId: continuous.network.representativePoint.connectorId,
+        wire: continuous.network.color,
+        signals: { [continuous.signalKey]: continuous.value }
+      });
     }
 
     for (const [entityNumber, signals] of overrideSignals) {
@@ -1023,12 +1202,17 @@ function evaluateAssertions(
   test: DslTestDefinition,
   simulation: SimulationResult,
   networkById: Map<string, DslCompiledNetwork>,
-  entityNumberById: Map<string, number>
+  entityNumberById: Map<string, number>,
+  ioDirectionById: Map<string, 'input' | 'output'>
 ): DslAssertionResult[] {
   const assertions: DslAssertionResult[] = [];
 
   for (const action of test.actions) {
-    if (action.kind !== 'assert-network-signal' && action.kind !== 'assert-combinator-signal') {
+    if (
+      action.kind !== 'assert-network-signal'
+      && action.kind !== 'assert-io-signal'
+      && action.kind !== 'assert-combinator-signal'
+    ) {
       continue;
     }
 
@@ -1049,10 +1233,24 @@ function evaluateAssertions(
       continue;
     }
 
-    if (action.kind === 'assert-network-signal') {
-      const network = networkById.get(action.networkId);
-      if (!network) {
-        throw new Error(`Test '${test.name}' references unknown network '${action.networkId}'.`);
+    if (action.kind === 'assert-network-signal' || action.kind === 'assert-io-signal') {
+      let network: DslCompiledNetwork | undefined;
+      if (action.kind === 'assert-network-signal') {
+        network = networkById.get(action.networkId);
+        if (!network) {
+          throw new Error(`Test '${test.name}' references unknown network '${action.networkId}'.`);
+        }
+      } else {
+        network = resolveIoNetworkTarget(
+          test.name,
+          action.tick,
+          action.side,
+          action.combinatorId,
+          action.wire,
+          networkById,
+          entityNumberById,
+          ioDirectionById
+        );
       }
 
       const actual = readSignalOnNetwork(tickFrame, network, key);
@@ -1118,11 +1316,51 @@ function readSignalOnConnector(
   return values.reduce((chosen, value) => (Math.abs(value) > Math.abs(chosen) ? value : chosen), 0);
 }
 
-function describeAssertion(action: DslAssertNetworkSignalAction | DslAssertCombinatorSignalAction): string {
+function describeAssertion(action: DslAssertNetworkSignalAction | DslAssertIoSignalAction | DslAssertCombinatorSignalAction): string {
   if (action.kind === 'assert-network-signal') {
     return `assert signal ${signalKey(action.signal) ?? '<invalid>'} = ${action.value} on network ${action.networkId}`;
   }
+  if (action.kind === 'assert-io-signal') {
+    return `assert signal ${signalKey(action.signal) ?? '<invalid>'} = ${action.value} on ${action.side} ${action.combinatorId} ${action.wire}`;
+  }
   return `assert signal ${signalKey(action.signal) ?? '<invalid>'} = ${action.value} on ${action.side} of ${action.combinatorId}`;
+}
+
+function resolveIoNetworkTarget(
+  testName: string,
+  tick: number,
+  side: 'input' | 'output',
+  combinatorId: string,
+  wire: WireColor,
+  networkById: Map<string, DslCompiledNetwork>,
+  entityNumberById: Map<string, number>,
+  ioDirectionById: Map<string, 'input' | 'output'>
+): DslCompiledNetwork {
+  const direction = ioDirectionById.get(combinatorId);
+  if (!direction) {
+    throw new Error(`Test '${testName}' tick ${tick} references unknown named ${side} '${combinatorId}'.`);
+  }
+  if (direction !== side) {
+    throw new Error(`Test '${testName}' tick ${tick} references ${side} '${combinatorId}', but it is declared as ${direction}.`);
+  }
+
+  const entityNumber = resolveCombinatorReference(combinatorId, entityNumberById);
+  const matches = Array.from(networkById.values()).filter((network) => (
+    network.color === wire
+    &&
+    network.points.some((point) => point.entityNumber === entityNumber)
+  ));
+
+  if (matches.length === 0) {
+    throw new Error(`Test '${testName}' tick ${tick} named ${side} '${combinatorId}' is not connected to any ${wire} network.`);
+  }
+
+  if (matches.length > 1) {
+    const ids = matches.map((network) => network.id).join(', ');
+    throw new Error(`Test '${testName}' tick ${tick} named ${side} '${combinatorId}' is connected to multiple ${wire} networks (${ids}); target an explicit network instead.`);
+  }
+
+  return matches[0];
 }
 
 function parseSignalAssignment(text: string, line: number): ParsedSignalCount {
@@ -1325,32 +1563,32 @@ function parseSignalToken(token: string, line: number): SignalID {
     return { type: 'virtual', name: 'signal-everything' };
   }
 
-  let type: string | undefined;
-  let nameAndQuality = raw;
-
-  const typeSeparator = raw.indexOf(':');
-  if (typeSeparator > 0) {
-    type = raw.slice(0, typeSeparator).trim();
-    nameAndQuality = raw.slice(typeSeparator + 1).trim();
+  if (/^[A-Z0-9]$/.test(raw)) {
+    return { type: 'virtual', name: `signal-${raw}` };
   }
 
-  const qualitySeparator = nameAndQuality.lastIndexOf('@');
-  let name = nameAndQuality;
-  let quality: string | undefined;
-  if (qualitySeparator > 0 && qualitySeparator < nameAndQuality.length - 1) {
-    name = nameAndQuality.slice(0, qualitySeparator);
-    quality = nameAndQuality.slice(qualitySeparator + 1);
+  const itemMatch = /^item\(([^,()\s][^,()]*)\s*(?:,\s*([^)]+?)\s*)?\)$/.exec(raw);
+  if (itemMatch) {
+    const itemName = itemMatch[1].trim();
+    const quality = itemMatch[2]?.trim();
+    if (!itemName) {
+      throw new Error(`Line ${line}: item signal name cannot be empty.`);
+    }
+
+    if (quality === '') {
+      throw new Error(`Line ${line}: item signal quality cannot be empty.`);
+    }
+
+    return {
+      type: 'item',
+      name: itemName,
+      quality: quality && quality !== 'normal' ? quality : undefined
+    };
   }
 
-  if (!name) {
-    throw new Error(`Line ${line}: signal name cannot be empty.`);
-  }
-
-  return {
-    type: (type || 'virtual') as SignalID['type'],
-    name,
-    quality
-  };
+  throw new Error(
+    `Line ${line}: unsupported signal token '${raw}'. Use one-character virtual signals A-Z/0-9 or item(name[,quality]).`
+  );
 }
 
 function lexDsl(source: string): SourceLine[] {

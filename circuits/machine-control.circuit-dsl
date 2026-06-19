@@ -1,0 +1,176 @@
+circuit: machine-control
+  description: Channels - REQ (input): red outstanding requested recipes by signal and remaining count; M_READ (input): red machine readback including recipe ingredient needs plus control flags F and W; AVAIL (input): red currently available ingredient signals; NEEDS (output): red pass-through of machine read ingredient needs; M_WRITE (output): red selected recipe signal for machine write.
+  imports: timer s-latch
+
+combinators:
+  REQ: input medium-electric-pole
+  M_READ: input medium-electric-pole
+  AVAIL: input medium-electric-pole
+  NEEDS: output medium-electric-pole
+  M_WRITE: output medium-electric-pole
+
+  NEEDS_BUF: arithmetic
+    each R + 0 -> each
+
+  NEG_NEEDS: arithmetic
+    each R * -1 -> each
+  DELTA: arithmetic
+    each R + each G -> each
+  WAIT_IF_SHORT: decider
+    conditions:
+      anything R < 0
+      AND "W" G = 0
+    outputs:
+      "W" = 1
+
+  TIMER: circuit timer
+
+  INC_ON_TIMEOUT: decider
+    conditions:
+      "O" R != 0
+    outputs:
+      "D" = 1
+      "R" = 1
+
+  COUNT_REQ: selector
+    operation: count
+    count_signal: C
+
+  INDEX_NEXT: arithmetic
+    "I" R + "D" R -> "I"
+  INDEX_WRAP: arithmetic
+    "I" R % "C" G -> "I"
+
+  SELECT_REQ: selector
+    operation: select
+    select_max: true
+    index_signal: I
+
+  SELECT_DELAY: arithmetic
+    each R + 0 -> each
+
+  CAN_SWITCH: decider
+    conditions:
+      "W" G = 0
+      OR "F" G != 0
+    outputs:
+      "U" = 1
+  SET_IF_SELECTED: decider
+    conditions:
+      "U" G != 0
+      AND anything R != 0
+    outputs:
+      "S" = 1
+
+  RECIPE_HOLD: circuit s-latch
+
+wires:
+  network ReqBus: red
+    REQ out -> COUNT_REQ in
+    REQ out -> SELECT_REQ in
+
+  network MReadBus: red
+    M_READ out -> NEEDS_BUF in
+    M_READ out -> NEG_NEEDS in
+
+  network NeedsOut: red
+    NEEDS_BUF out -> NEEDS in
+
+  network AvailMinusNeedsA: red
+    AVAIL out -> DELTA in
+  network AvailMinusNeedsB: green
+    NEG_NEEDS out -> DELTA in
+
+  network WaitCalc: red
+    DELTA out -> WAIT_IF_SHORT in
+  network WorkRead: green
+    M_READ out -> WAIT_IF_SHORT in
+    M_READ out -> CAN_SWITCH in
+
+  network TimerIn: red
+    WAIT_IF_SHORT out -> TIMER WAIT_IN
+  network TimerOut: red
+    TIMER OUT -> INC_ON_TIMEOUT in
+
+  network TimerReset: green
+    INC_ON_TIMEOUT out -> TIMER RESET_IN
+
+  network IndexDelta: red
+    INC_ON_TIMEOUT out -> INDEX_NEXT in
+
+  network IndexState: red
+    INDEX_WRAP out -> INDEX_NEXT in
+  network IndexRaw: red
+    INDEX_NEXT out -> INDEX_WRAP in
+  network IndexToSelect: green
+    INDEX_WRAP out -> SELECT_REQ in
+  network ReqCount: green
+    COUNT_REQ out -> INDEX_WRAP in
+
+  network SelectedReq: red
+    SELECT_REQ out -> SET_IF_SELECTED in
+    SELECT_REQ out -> SELECT_DELAY in
+
+  network SelectedReqDelayed: red
+    SELECT_DELAY out -> RECIPE_HOLD DATA_IN
+
+  network SwitchEnable: green
+    CAN_SWITCH out -> SET_IF_SELECTED in
+
+  network SetRecipe: green
+    SET_IF_SELECTED out -> RECIPE_HOLD SET_IN
+
+  network RecipeOut: red
+    RECIPE_HOLD OUT -> M_WRITE in
+
+tests:
+  no-request-produces-no-write:
+    tick 2:
+      assert signal "A" = 0 on output M_WRITE red
+      assert signal "B" = 0 on output M_WRITE red
+
+  selects-most-requested-when-idle:
+    tick 0:
+      apply signal "A" = 12 to input REQ red continuously
+      apply signal "B" = 8 to input REQ red continuously
+    tick 6:
+      assert signal "A" = 12 on output M_WRITE red
+      assert signal "B" = 0 on output M_WRITE red
+
+  mirrors-machine-needs-to-needs-output:
+    tick 0:
+      apply signal item(iron-plate) = 3 to input M_READ red continuously
+      apply signal item(copper-plate) = 2 to input M_READ red continuously
+    tick 2:
+      assert signal item(iron-plate) = 3 on output NEEDS red
+      assert signal item(copper-plate) = 2 on output NEEDS red
+
+  holds-selection-while-working-and-switches-on-finish:
+    tick 0:
+      apply signal "A" = 12 to input REQ red continuously
+      apply signal "B" = 8 to input REQ red continuously
+    tick 8:
+      assert signal "A" = 12 on output M_WRITE red
+    tick 20:
+      apply signal "B" = 20 to input REQ red continuously
+      apply signal "W" = 1 to input M_READ green continuously
+    tick 40:
+      assert signal "A" = 12 on output M_WRITE red
+    tick 41:
+      apply signal "F" = 1 to input M_READ green
+    tick 60:
+      assert signal "B" = 20 on output M_WRITE red
+
+  timeout-advances-index-then-restarts-at-most-requested:
+    tick 0:
+      apply signal "A" = 12 to input REQ red continuously
+      apply signal "B" = 8 to input REQ red continuously
+      apply signal item(iron-plate) = 10 to input M_READ red continuously
+      apply signal item(iron-plate) = 0 to input AVAIL red continuously
+    tick 100:
+      assert signal "A" = 12 on output M_WRITE red
+    tick 312:
+      assert signal "B" = 8 on output M_WRITE red
+    tick 314:
+      assert signal "A" = 12 on output M_WRITE red
+

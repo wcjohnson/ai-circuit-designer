@@ -1,0 +1,61 @@
+circuit: timer
+  description: Channels - WAIT_IN (input): red W gate, non-zero while waiting should accumulate; RESET_IN (input): green R reset gate, non-zero forces wait gate off; OUT (output): red O asserted when wait has been continuous long enough.
+
+combinators:
+  WAIT_IN: input medium-electric-pole
+  RESET_IN: input medium-electric-pole
+  OUT: output medium-electric-pole
+  WAIT_GATE: decider
+    conditions:
+      "W" R != 0
+      AND "R" G = 0
+    outputs:
+      "W" = 1
+  INC: arithmetic
+    "T" R + "W" G -> "T"
+  MASK: arithmetic
+    "T" R * "W" G -> "T"
+  TIMEOUT: decider
+    conditions:
+      "T" R >= 150
+    outputs:
+      "O" = 1
+
+wires:
+  network WaitIn: red
+    WAIT_IN out -> WAIT_GATE in
+  network Reset: green
+    RESET_IN out -> WAIT_GATE in
+  network WaitCtl: green
+    WAIT_GATE out -> INC in
+    WAIT_GATE out -> MASK in
+  network CountState: red
+    MASK out -> INC in
+    MASK out -> TIMEOUT in
+  network CountNext: red
+    INC out -> MASK in
+  network PublicOut: red
+    TIMEOUT out -> OUT in
+
+tests:
+  idle-has-no-timeout:
+    tick 5:
+      assert signal "O" = 0 on output OUT red
+
+  wait-reaches-timeout-after-threshold:
+    tick 0:
+      apply signal "W" = 1 to input WAIT_IN red continuously
+    tick 200:
+      assert signal "O" = 0 on output OUT red
+    tick 320:
+      assert signal "O" = 1 on output OUT red
+
+  reset-clears-timeout:
+    tick 0:
+      apply signal "W" = 1 to input WAIT_IN red continuously
+    tick 320:
+      assert signal "O" = 1 on output OUT red
+      apply signal "R" = 1 to input RESET_IN green continuously
+    tick 332:
+      assert signal "O" = 0 on output OUT red
+

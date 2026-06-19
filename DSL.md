@@ -48,10 +48,15 @@ Signals
 
 Signal token forms:
 
-- `"signal-A"` (quoted name)
-- `signal-A` (unquoted name)
-- `type:name` (explicit type), for example `item:iron-ore`
-- `name@quality` or `type:name@quality`, for example `item:iron-ore@rare`
+- Virtual shorthand: `A` through `Z`, and `0` through `9`
+  - Example: `A` compiles to Factorio virtual signal `signal-A`
+  - Example: `7` compiles to Factorio virtual signal `signal-7`
+- Item signal: `item(<item-name>)` or `item(<item-name>,<quality>)`
+  - Example: `item(iron-plate)`
+  - Example: `item(iron-plate,legendary)`
+  - `normal` quality is implicit and omitted in compiled output
+
+Unsupported signal forms now fail compilation (for example `signal-A`, `type:name`, or `name@quality`).
 
 Special signal keywords:
 
@@ -207,7 +212,14 @@ Inside each test, define per-tick blocks:
 Inside each tick block, supported actions:
 
 - `apply signal <signal> = <integer> to network <network-id>`
+- `apply signal <signal> = <integer> to network <network-id> continuously`
+- `apply signal <signal> = <integer> to input <combinator-id> <red|green>`
+- `apply signal <signal> = <integer> to input <combinator-id> <red|green> continuously`
+- `apply signal <signal> = <integer> to output <combinator-id> <red|green>`
+- `apply signal <signal> = <integer> to output <combinator-id> <red|green> continuously`
 - `assert signal <signal> = <integer> on network <network-id>`
+- `assert signal <signal> = <integer> on input <combinator-id> <red|green>`
+- `assert signal <signal> = <integer> on output <combinator-id> <red|green>`
 - `assert signal <signal> = <integer> on input of <combinator-id>`
 - `assert signal <signal> = <integer> on output of <combinator-id>`
 - `set constant combinator <combinator-id> signals:` plus nested signal assignments
@@ -215,6 +227,11 @@ Inside each tick block, supported actions:
 Test action semantics
 
 - `apply signal`: injects an external input at that tick onto the named network's representative connector.
+- `apply signal ... to input/output <id> <red|green>`: resolves the named endpoint on that wire color to its attached network and injects exactly as a network-targeted apply would.
+- `apply signal ... continuously`: starts or updates a continuous injected value from that tick onward.
+  - continuous values are applied every tick until overridden by another continuous assignment for the same `<network-id>` + `<signal>`.
+  - assigning `0` continuously stops the continuous injection for that `<network-id>` + `<signal>`.
+- `assert signal ... on input/output <id> <red|green>`: resolves the named endpoint on that wire color to its attached network and checks the network signal value.
 - `set constant combinator ... signals:`:
   - sets an override signal map for that constant combinator starting at that tick,
   - implemented by injecting per-tick deltas vs original blueprint constants.
