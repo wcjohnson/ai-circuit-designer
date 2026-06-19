@@ -80,7 +80,7 @@ interface ParsedWireEndpoint {
 interface ParsedCircuitInfo {
   name: string;
   description?: string;
-  imports: string[];
+  imports?: string[];
 }
 
 type DeciderOutputValue =
@@ -317,7 +317,7 @@ function parseCircuitSection(section: { header: SourceLine; value?: string; bloc
     throw new Error(`Line ${section.header.line}: circuit section must include a circuit name: 'circuit: <name>'.`);
   }
 
-  const info: ParsedCircuitInfo = { name, imports: [] };
+  const info: ParsedCircuitInfo = { name };
   if (section.block.length === 0) {
     return info;
   }
@@ -340,7 +340,10 @@ function parseCircuitSection(section: { header: SourceLine; value?: string; bloc
       continue;
     }
     if (key === 'imports') {
-      info.imports = value ? value.split(/\s+/).filter(Boolean) : [];
+      const imports = value ? value.split(/\s+/).filter(Boolean) : [];
+      if (imports.length > 0) {
+        info.imports = imports;
+      }
       continue;
     }
 

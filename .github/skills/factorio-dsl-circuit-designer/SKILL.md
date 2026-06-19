@@ -13,8 +13,10 @@ File and output conventions:
 - Store all circuit designs under `circuits/`.
 - Circuit DSL extension is `.circuit-dsl`.
 - For `circuits/X.circuit-dsl`, compiled outputs are `circuits/X.blueprint.json` and `circuits/X.blueprint.txt`.
+- Whenever an existing `circuits/X.circuit-dsl` file is changed, recompile and update both `circuits/X.blueprint.json` and `circuits/X.blueprint.txt` in the same change.
 
 Output includes:
+- `circuit: <name>` section with metadata
 - `combinators:` section
 - `wires:` section
 - `tests:` section with meaningful assertions
@@ -52,6 +54,13 @@ Assumption policy:
 - Define input signals and output signals.
 - Write expected behavior in short, testable statements.
 
+1a. Define embeddable circuit metadata.
+- Always include `circuit: <name>` where `<name>` matches the target filename stem.
+- Add `description:` with agent-friendly channel semantics for every interface combinator.
+- For `input`/`output` interface combinators, describe each channel by ID and role in one compact sentence, for example:
+  - `SIG_IN (input): ...; RESET_IN (input): ...; OUT (output): ...`
+- Include `imports:` only when one or more imported subcircuits are actually used; otherwise omit `imports:`.
+
 2. Choose combinator strategy.
 - Prefer the minimum possible total combinator count that satisfies behavior.
 - Use `constant` for fixtures/default values.
@@ -59,6 +68,7 @@ Assumption policy:
 - Use `decider` for branching/gating.
 - Use `selector` only when operation semantics are required.
 - Use `pole` only to route or join networks.
+- Prefer `input` and `output` combinator kinds for externally exposed circuit interfaces.
 
 3. Assign stable IDs and layout intent.
 - Use deterministic IDs (`1`, `2`, `A1`, `D1`, etc.).
@@ -106,6 +116,7 @@ Assumption policy:
 9. Persist artifacts with canonical paths.
 - Write the design file to `circuits/<name>.circuit-dsl`.
 - Compile so outputs land at `circuits/<name>.blueprint.json` and `circuits/<name>.blueprint.txt`.
+- For edits to an existing circuit DSL, treat recompiling and committing refreshed blueprint artifacts as required, not optional.
 
 ## Decision Rules
 

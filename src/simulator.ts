@@ -758,14 +758,60 @@ function evaluateSelector(entity: BlueprintEntity, input: ReadonlySignalBag): Si
 }
 
 function evaluateSelectorSelect(config: SelectorCombinatorParameters, input: ReadonlySignalBag): SignalBag {
-  const candidates = [...input.entries()].filter(([, value]) => value !== 0);
+  const indexSignal = signalName(config.index_signal);
+  const candidates = [...input.entries()].filter(([signal, value]) => (
+    value !== 0 && !isSelectorIndexSignal(signal, indexSignal)
+  ));
   const selectMax = config.select_max ?? true;
   candidates.sort((left, right) => compareSelectorSignals(left, right, selectMax));
 
-  const indexSignal = signalName(config.index_signal);
-  const index = Math.max(0, toInt32(indexSignal ? getSignal(input, indexSignal) : Number(config.index_constant ?? 0)));
+  const index = Math.max(0, toInt32(resolveSelectorIndex(input, indexSignal, Number(config.index_constant ?? 0))));
   const selected = candidates[index];
   return selected ? new Map([selected]) : new Map();
+}
+
+function resolveSelectorIndex(input: ReadonlySignalBag, indexSignal: SignalName | undefined, indexConstant: number): number {
+  if (!indexSignal) {
+    return indexConstant;
+  }
+
+  const exact = input.get(indexSignal);
+  if (exact !== undefined) {
+    return exact;
+  }
+
+  const parsedIndexSignal = parseSignalKey(indexSignal);
+  if (!parsedIndexSignal.quality) {
+    return sumSignalValuesByName(input, parsedIndexSignal.name);
+  }
+
+  return 0;
+}
+
+function isSelectorIndexSignal(candidateSignal: SignalName, indexSignal: SignalName | undefined): boolean {
+  if (!indexSignal) {
+    return false;
+  }
+  if (candidateSignal === indexSignal) {
+    return true;
+  }
+
+  const parsedIndexSignal = parseSignalKey(indexSignal);
+  if (parsedIndexSignal.quality) {
+    return false;
+  }
+
+  return parseSignalKey(candidateSignal).name === parsedIndexSignal.name;
+}
+
+function sumSignalValuesByName(input: ReadonlySignalBag, signalNameBase: string): number {
+  let total = 0;
+  for (const [signal, value] of input.entries()) {
+    if (parseSignalKey(signal).name === signalNameBase) {
+      total += value;
+    }
+  }
+  return total;
 }
 
 function evaluateSelectorCount(config: SelectorCombinatorParameters, input: ReadonlySignalBag): SignalBag {

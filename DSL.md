@@ -29,12 +29,13 @@ Optional top-level declaration:
 Body keys:
 
 - `description: <arbitrary text>`
-- `imports: <space-separated circuit names>`
+- `imports: <space-separated circuit names>` (optional)
 
 Rules:
 
 - If `circuit:` is present, `<circuit_name>` must match the source filename stem before `.circuit-dsl` (or `.circuit_dsl`) or compilation fails.
 - Imported circuits are loaded from files relative to the current DSL file.
+- If there are no imports, omit `imports:`.
 
 Indentation and formatting
 

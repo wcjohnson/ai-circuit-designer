@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createSimulationState, simulateBlueprint } from '../src/simulator.js';
+import { createSimulationState, readBlueprint, simulateBlueprint } from '../src/simulator.js';
 import type { ExternalInput, FactorioBlueprint, SignalMap, SimulationResult, WireColor } from '../src/simulator.js';
 
 const root = process.cwd();
@@ -252,6 +252,123 @@ test('selector select mode uses index_signal value as 0-based index N', () => {
   });
 
   assert.deepEqual(signalsOn(result, 1, 'red', 1, 2), { 'signal-C': 7 });
+});
+
+test('selector select mode outputs nothing when index is out of bounds', () => {
+  const result = simulateBlueprint({
+    item: 'blueprint',
+    entities: [
+      {
+        entity_number: 1,
+        name: 'selector-combinator',
+        position: { x: 0, y: 0 },
+        control_behavior: {
+          operation: 'select',
+          select_max: true,
+          index_constant: 3
+        }
+      }
+    ]
+  }, {
+    ticks: 2,
+    inputs: [
+      { entityId: 1, connectorId: 1, wire: 'red', signals: { 'signal-A': 4, 'signal-B': 9, 'signal-C': 6 } }
+    ]
+  });
+
+  assert.deepEqual(signalsOn(result, 1, 'red', 1, 2), {});
+});
+
+test('selector select mode is zero-based where 0 is frontmost and N-1 is backmost', () => {
+  const result = simulateBlueprint({
+    item: 'blueprint',
+    entities: [
+      {
+        entity_number: 1,
+        name: 'selector-combinator',
+        position: { x: 0, y: 0 },
+        control_behavior: {
+          operation: 'select',
+          select_max: true,
+          index_constant: 0
+        }
+      },
+      {
+        entity_number: 2,
+        name: 'selector-combinator',
+        position: { x: 2, y: 0 },
+        control_behavior: {
+          operation: 'select',
+          select_max: true,
+          index_constant: 2
+        }
+      }
+    ]
+  }, {
+    ticks: 2,
+    inputs: [
+      { entityId: 1, connectorId: 1, wire: 'red', signals: { 'signal-A': 4, 'signal-B': 9, 'signal-C': 6 } },
+      { entityId: 2, connectorId: 1, wire: 'red', signals: { 'signal-A': 4, 'signal-B': 9, 'signal-C': 6 } }
+    ]
+  });
+
+  assert.deepEqual(signalsOn(result, 1, 'red', 1, 2), { 'signal-B': 9 });
+  assert.deepEqual(signalsOn(result, 1, 'red', 2, 2), { 'signal-A': 4 });
+});
+
+test('selector select mode excludes index_signal from the sorted candidate set', () => {
+  const result = simulateBlueprint({
+    item: 'blueprint',
+    entities: [
+      {
+        entity_number: 1,
+        name: 'selector-combinator',
+        position: { x: 0, y: 0 },
+        control_behavior: {
+          operation: 'select',
+          select_max: true,
+          index_signal: { type: 'virtual', name: 'signal-I' }
+        }
+      }
+    ]
+  }, {
+    ticks: 2,
+    inputs: [
+      {
+        entityId: 1,
+        connectorId: 1,
+        wire: 'red',
+        signals: { 'signal-A': 9, 'signal-B': 8, 'signal-C': 7, 'signal-I': 2 }
+      }
+    ]
+  });
+
+  assert.deepEqual(signalsOn(result, 1, 'red', 1, 2), { 'signal-C': 7 });
+});
+
+test('selector select mode outputs nothing for provided blueprint string regression case', () => {
+  const blueprintString = '0eNqVU1tuwjAQvMt+G9QEAo2lfrQH6AUQihzYtpYSO3UcWoRy944dKJQiEIqEzGZ3Hp7Njsqq48Zp40nuSK+saUkudtTqd6OqUDOqZpLUcsUrb91oZetSG4Uj9YK0WfM3yaQXF2YCmlfGX55J+6UgNl57zQNp/LMtTFeX7AAqrgEJamyLWWsCI/Amk3EmaEtyNE/HGXgw5Z2tipI/1EZjBH0tTOho8vQM7oMRQW+68uzOq37bBCUb7XwHk7/SBtOjZ1Q+8QL6UTTW1bEJehvlol5JT7HQhatOHsKFHS7iJvrLfejZCfjkJvjrfeCIDU8fKM7ySsW1Zfmf1+xPWmvthjxITi9nZxuGntixZwDocChqBUTvOt6vV3Fcxpv2YQab+AX+EPoiEYlIRbJETXuu0Xn8RgRtsBpRQjZL82meZ4/T2Rw/ff8D32Aaaw==';
+  const blueprint = readBlueprint(blueprintString);
+  const selector = blueprint.entities.find((entity) => entity.name === 'selector-combinator');
+  assert.ok(selector, 'Expected a selector combinator in the provided blueprint string.');
+
+  const result = simulateBlueprint(blueprintString, { ticks: 2 });
+  const outputNetworks = result.ticks[1]?.networks.filter((network) => (
+    network.points.some((point) => point.entityId === selector.entity_number && point.connectorId === 2)
+  )) ?? [];
+
+  assert.ok(
+    outputNetworks.length > 0,
+    'Expected selector output networks to exist for the provided blueprint regression case.'
+  );
+
+  for (const network of outputNetworks) {
+    assert.deepEqual(
+      network.signals,
+      {},
+      `Expected no selector output, but found signals on ${network.wire} network '${network.id}'.`
+    );
+  }
 });
 
 test('selector combinator count operation emits number of non-zero signals', () => {
