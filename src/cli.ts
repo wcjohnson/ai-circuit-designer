@@ -90,7 +90,7 @@ try {
 
   if (options.command === 'simulate-dsl') {
     const dslSource = await readDslSource(options.dslPath);
-    const compiled = compileDsl(dslSource);
+    const compiled = compileDsl(dslSource, { sourcePath: options.dslPath });
     const externalInputs = options.inputsPath
       ? JSON.parse(await readFile(options.inputsPath, 'utf8')) as ExternalInput[]
       : [];
@@ -125,7 +125,8 @@ try {
     const outputBlueprintStringPath = options.outputBlueprintStringPath ?? defaultOutputPaths?.stringPath;
     const includeBlueprintString = options.includeBlueprintString || Boolean(options.outputBlueprintStringPath);
     const result = compileDsl(dslSource, {
-      includeBlueprintString: includeBlueprintString || Boolean(outputBlueprintStringPath)
+      includeBlueprintString: includeBlueprintString || Boolean(outputBlueprintStringPath),
+      sourcePath: options.dslPath
     });
 
     if (outputBlueprintJsonPath) {
@@ -143,7 +144,8 @@ try {
   }
 
   const result = runDslTests(dslSource, {
-    testName: options.testName
+    testName: options.testName,
+    sourcePath: options.dslPath
   });
 
   if (options.json) {

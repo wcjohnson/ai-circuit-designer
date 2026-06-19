@@ -1,4 +1,6 @@
 import { WIRE_CONNECTOR_ID, createBlueprint, writeBlueprintString } from './blueprint.js';
+import { readFileSync } from 'node:fs';
+import { dirname, join, parse as parsePath } from 'node:path';
 import type {
   ArithmeticCombinatorEntity,
   BlueprintLogisticFilter,
@@ -21,10 +23,12 @@ import type { ExternalInput, SimulationResult } from './simulator.js';
 
 export interface DslCompileOptions {
   includeBlueprintString?: boolean;
+  sourcePath?: string;
 }
 
 export interface DslRunTestOptions {
   testName?: string;
+  sourcePath?: string;
 }
 
 export interface DslCompiledNetwork {
@@ -64,8 +68,20 @@ export interface DslTestRunResult {
   tests: DslTestResult[];
 }
 
-type CombinatorKind = 'constant' | 'arithmetic' | 'decider' | 'selector' | 'pole';
+type CombinatorKind = 'constant' | 'arithmetic' | 'decider' | 'selector' | 'pole' | 'input' | 'output' | 'circuit';
 type PortDirection = 'in' | 'out';
+
+interface ParsedWireEndpoint {
+  combinatorId: string;
+  port: PortDirection;
+  subIoId?: string;
+}
+
+interface ParsedCircuitInfo {
+  name: string;
+  description?: string;
+  imports: string[];
+}
 
 type DeciderOutputValue =
   | { kind: 'input'; networks?: { red?: boolean; green?: boolean } }
@@ -126,6 +142,7 @@ interface ParsedCombinator {
   id: string;
   kind: CombinatorKind;
   poleName?: string;
+  circuitName?: string;
   constants: ParsedSignalCount[];
   arithmetic?: ParsedArithmetic;
   deciderConditions: ParsedDeciderCondition[];
@@ -134,10 +151,8 @@ interface ParsedCombinator {
 }
 
 interface ParsedWireEdge {
-  fromId: string;
-  fromPort: PortDirection;
-  toId: string;
-  toPort: PortDirection;
+  from: ParsedWireEndpoint;
+  to: ParsedWireEndpoint;
 }
 
 interface ParsedWireNetwork {
@@ -190,26 +205,36 @@ export interface DslTestDefinition {
 }
 
 interface ParsedDslDocument {
+  circuit?: ParsedCircuitInfo;
+  sourcePath?: string;
   combinators: ParsedCombinator[];
   wireNetworks: ParsedWireNetwork[];
   tests: DslTestDefinition[];
 }
 
 export function compileDsl(source: string, options: DslCompileOptions = {}): DslCompiledDocument {
-  const parsed = parseDsl(source);
-  const { blueprint, compiledNetworks, entityNumberById } = compileBlueprint(parsed);
+  const parsed = parseDsl(source, options.sourcePath);
+  if (parsed.circuit && !options.sourcePath) {
+    throw new Error('Circuit DSL with a circuit section must be loaded from a file path.');
+  }
+  validateCircuitNameMatchesFile(parsed);
+  const registry = loadImportRegistry(parsed);
+  const expanded = expandParsedDocument(parsed, registry);
+  const { blueprint, compiledNetworks, entityNumberById } = compileBlueprint(expanded);
 
   return {
     blueprint,
     blueprintString: options.includeBlueprintString ? writeBlueprintString(blueprint) : undefined,
-    tests: parsed.tests,
+    tests: expanded.tests,
     networks: compiledNetworks,
     entities: Object.fromEntries(entityNumberById.entries())
   };
 }
 
 export function runDslTests(sourceOrCompiled: string | DslCompiledDocument, options: DslRunTestOptions = {}): DslTestRunResult {
-  const compiled = typeof sourceOrCompiled === 'string' ? compileDsl(sourceOrCompiled) : sourceOrCompiled;
+  const compiled = typeof sourceOrCompiled === 'string'
+    ? compileDsl(sourceOrCompiled, { sourcePath: options.sourcePath })
+    : sourceOrCompiled;
   const testsToRun = options.testName
     ? compiled.tests.filter((test) => test.name === options.testName)
     : compiled.tests;
@@ -250,9 +275,9 @@ export function runDslTests(sourceOrCompiled: string | DslCompiledDocument, opti
   };
 }
 
-function parseDsl(source: string): ParsedDslDocument {
+function parseDsl(source: string, sourcePath?: string): ParsedDslDocument {
   const lines = lexDsl(source);
-  const sections = new Map<string, SourceLine[]>();
+  const sections = new Map<string, { header: SourceLine; value?: string; block: SourceLine[] }>();
   let index = 0;
 
   while (index < lines.length) {
@@ -261,22 +286,68 @@ function parseDsl(source: string): ParsedDslDocument {
       throw new Error(`Line ${line.line}: top-level section header must have no indentation.`);
     }
 
-    const sectionMatch = /^([A-Za-z][A-Za-z0-9_-]*)\s*:$/.exec(line.text);
+    const sectionMatch = /^([A-Za-z][A-Za-z0-9_-]*)\s*:\s*(.*)$/.exec(line.text);
     if (!sectionMatch) {
       throw new Error(`Line ${line.line}: expected top-level section header like 'combinators:'.`);
     }
 
     const sectionName = sectionMatch[1].toLowerCase();
+    const sectionValue = sectionMatch[2]?.trim() || undefined;
     const [nextIndex, block] = readIndentedBlock(lines, index + 1, line.indent);
-    sections.set(sectionName, block);
+    sections.set(sectionName, { header: line, value: sectionValue, block });
     index = nextIndex;
   }
 
   return {
-    combinators: parseCombinators(sections.get('combinators') ?? []),
-    wireNetworks: parseWireNetworks(sections.get('wires') ?? []),
-    tests: parseTests(sections.get('tests') ?? [])
+    sourcePath,
+    circuit: parseCircuitSection(sections.get('circuit')),
+    combinators: parseCombinators(sections.get('combinators')?.block ?? []),
+    wireNetworks: parseWireNetworks(sections.get('wires')?.block ?? []),
+    tests: parseTests(sections.get('tests')?.block ?? [])
   };
+}
+
+function parseCircuitSection(section: { header: SourceLine; value?: string; block: SourceLine[] } | undefined): ParsedCircuitInfo | undefined {
+  if (!section) {
+    return undefined;
+  }
+
+  const name = section.value?.trim();
+  if (!name) {
+    throw new Error(`Line ${section.header.line}: circuit section must include a circuit name: 'circuit: <name>'.`);
+  }
+
+  const info: ParsedCircuitInfo = { name, imports: [] };
+  if (section.block.length === 0) {
+    return info;
+  }
+
+  const baseIndent = section.block[0].indent;
+  for (const line of section.block) {
+    if (line.indent !== baseIndent) {
+      throw new Error(`Line ${line.line}: invalid indentation in circuit section.`);
+    }
+
+    const kvMatch = /^([A-Za-z][A-Za-z0-9_-]*)\s*:\s*(.*)$/.exec(line.text);
+    if (!kvMatch) {
+      throw new Error(`Line ${line.line}: expected circuit metadata '<key>: <value>'.`);
+    }
+
+    const key = kvMatch[1].toLowerCase();
+    const value = kvMatch[2].trim();
+    if (key === 'description') {
+      info.description = value;
+      continue;
+    }
+    if (key === 'imports') {
+      info.imports = value ? value.split(/\s+/).filter(Boolean) : [];
+      continue;
+    }
+
+    throw new Error(`Line ${line.line}: unsupported circuit metadata key '${kvMatch[1]}'.`);
+  }
+
+  return info;
 }
 
 function parseCombinators(lines: SourceLine[]): ParsedCombinator[] {
@@ -331,6 +402,21 @@ function createCombinatorDeclaration(id: string, typeSpec: string, line: number)
     if (!poleName) {
       throw new Error(`Line ${line}: pole declaration must include a pole entity name.`);
     }
+  } else if (normalized.startsWith('input ')) {
+    kind = 'input';
+    poleName = typeSpec.slice('input '.length).trim();
+    if (!poleName) {
+      throw new Error(`Line ${line}: input declaration must include a pole entity name.`);
+    }
+  } else if (normalized.startsWith('output ')) {
+    kind = 'output';
+    poleName = typeSpec.slice('output '.length).trim();
+    if (!poleName) {
+      throw new Error(`Line ${line}: output declaration must include a pole entity name.`);
+    }
+  } else if (normalized.startsWith('circuit ')) {
+    kind = 'circuit';
+    poleName = undefined;
   } else {
     throw new Error(`Line ${line}: unsupported combinator kind '${typeSpec}'.`);
   }
@@ -339,6 +425,7 @@ function createCombinatorDeclaration(id: string, typeSpec: string, line: number)
     id,
     kind,
     poleName,
+    circuitName: kind === 'circuit' ? typeSpec.slice('circuit '.length).trim() : undefined,
     constants: [],
     arithmetic: undefined,
     deciderConditions: [],
@@ -348,6 +435,13 @@ function createCombinatorDeclaration(id: string, typeSpec: string, line: number)
 }
 
 function parseCombinatorBody(combinator: ParsedCombinator, body: SourceLine[]): void {
+  if (combinator.kind === 'circuit') {
+    if (body.length > 0) {
+      throw new Error(`Line ${body[0].line}: circuit combinator does not accept a body.`);
+    }
+    return;
+  }
+
   if (body.length === 0) {
     return;
   }
@@ -463,16 +557,35 @@ function parseWireNetworks(lines: SourceLine[]): ParsedWireNetwork[] {
 }
 
 function parseWireEdge(text: string, line: number): ParsedWireEdge {
-  const edgeMatch = /^(.+?)\s+(in|out)\s*->\s*(.+?)\s+(in|out)$/i.exec(text);
+  const edgeMatch = /^(.+?)\s*->\s*(.+)$/.exec(text);
   if (!edgeMatch) {
-    throw new Error(`Line ${line}: expected wire edge '<from> <in|out> -> <to> <in|out>'.`);
+    throw new Error(`Line ${line}: expected wire edge '<from> -> <to>'.`);
   }
 
   return {
-    fromId: edgeMatch[1].trim(),
-    fromPort: edgeMatch[2].toLowerCase() as PortDirection,
-    toId: edgeMatch[3].trim(),
-    toPort: edgeMatch[4].toLowerCase() as PortDirection
+    from: parseWireEndpoint(edgeMatch[1].trim(), line, 'from'),
+    to: parseWireEndpoint(edgeMatch[2].trim(), line, 'to')
+  };
+}
+
+function parseWireEndpoint(text: string, line: number, side: 'from' | 'to'): ParsedWireEndpoint {
+  const parts = text.split(/\s+/).filter(Boolean);
+  if (parts.length !== 2) {
+    throw new Error(`Line ${line}: wire ${side} endpoint must be '<id> <in|out>' or '<subcircuit-id> <io-id>'.`);
+  }
+
+  const second = parts[1];
+  if (second === 'in' || second === 'out') {
+    return {
+      combinatorId: parts[0],
+      port: second as PortDirection
+    };
+  }
+
+  return {
+    combinatorId: parts[0],
+    subIoId: parts[1],
+    port: side === 'from' ? 'out' : 'in'
   };
 }
 
@@ -656,31 +769,31 @@ function compileBlueprint(parsed: ParsedDslDocument): {
     }
 
     const firstEdge = network.edges[0];
-    const firstEntity = resolveCombinatorReference(firstEdge.fromId, entityNumberById);
-    const firstKind = resolveCombinatorKind(firstEdge.fromId, kindById);
+      const firstEntity = resolveCombinatorReference(firstEdge.from.combinatorId, entityNumberById);
+      const firstKind = resolveCombinatorKind(firstEdge.from.combinatorId, kindById);
     compiledNetworks.push({
       id: network.id,
       color: network.color,
       representativePoint: {
         entityNumber: firstEntity,
-        connectorId: connectorPointId(firstKind, firstEdge.fromPort)
+          connectorId: connectorPointId(firstKind, firstEdge.from.port)
       }
     });
 
     for (const edge of network.edges) {
-      const sourceEntityNumber = resolveCombinatorReference(edge.fromId, entityNumberById);
-      const targetEntityNumber = resolveCombinatorReference(edge.toId, entityNumberById);
-      const sourceKind = resolveCombinatorKind(edge.fromId, kindById);
-      const targetKind = resolveCombinatorKind(edge.toId, kindById);
+      const sourceEntityNumber = resolveCombinatorReference(edge.from.combinatorId, entityNumberById);
+      const targetEntityNumber = resolveCombinatorReference(edge.to.combinatorId, entityNumberById);
+      const sourceKind = resolveCombinatorKind(edge.from.combinatorId, kindById);
+      const targetKind = resolveCombinatorKind(edge.to.combinatorId, kindById);
 
       const wire = makeBlueprintWire(
         network.color,
         sourceEntityNumber,
         sourceKind,
-        edge.fromPort,
+        edge.from.port,
         targetEntityNumber,
         targetKind,
-        edge.toPort
+        edge.to.port
       );
 
       if (!wiresByEntity.has(sourceEntityNumber)) {
@@ -1407,4 +1520,178 @@ function subtractSignalMaps(target: SignalMap, baseline: SignalMap): SignalMap {
   }
 
   return result;
+}
+
+function validateCircuitNameMatchesFile(parsed: ParsedDslDocument): void {
+  if (!parsed.circuit || !parsed.sourcePath) {
+    return;
+  }
+
+  const parsedPath = parsePath(parsed.sourcePath);
+  const base = parsedPath.base;
+  let expected: string | undefined;
+  if (base.endsWith('.circuit-dsl')) {
+    expected = base.slice(0, -'.circuit-dsl'.length);
+  } else if (base.endsWith('.circuit_dsl')) {
+    expected = base.slice(0, -'.circuit_dsl'.length);
+  }
+
+  if (!expected) {
+    return;
+  }
+
+  if (parsed.circuit.name !== expected) {
+    throw new Error(`Circuit name '${parsed.circuit.name}' must match filename stem '${expected}'.`);
+  }
+}
+
+function loadImportRegistry(root: ParsedDslDocument): Map<string, ParsedDslDocument> {
+  const registry = new Map<string, ParsedDslDocument>();
+  const rootDir = root.sourcePath ? dirname(root.sourcePath) : undefined;
+  const stack = new Set<string>();
+
+  const ensureLoaded = (name: string): ParsedDslDocument => {
+    if (registry.has(name)) {
+      return registry.get(name)!;
+    }
+    if (!rootDir) {
+      throw new Error(`Cannot resolve import '${name}' without a source file path.`);
+    }
+    if (stack.has(name)) {
+      throw new Error(`Circular circuit import detected at '${name}'.`);
+    }
+    stack.add(name);
+
+    const candidates = [
+      join(rootDir, `${name}.circuit-dsl`),
+      join(rootDir, `${name}.circuit_dsl`)
+    ];
+
+    let loadedPath: string | undefined;
+    let loadedSource: string | undefined;
+    for (const candidate of candidates) {
+      try {
+        loadedSource = readFileSync(candidate, 'utf8');
+        loadedPath = candidate;
+        break;
+      } catch {
+        // try next candidate
+      }
+    }
+
+    if (!loadedPath || loadedSource === undefined) {
+      throw new Error(`Imported circuit '${name}' not found in ${rootDir}.`);
+    }
+
+    const parsed = parseDsl(loadedSource, loadedPath);
+    validateCircuitNameMatchesFile(parsed);
+    registry.set(name, parsed);
+    for (const child of parsed.circuit?.imports ?? []) {
+      ensureLoaded(child);
+    }
+
+    stack.delete(name);
+    return parsed;
+  };
+
+  for (const importName of root.circuit?.imports ?? []) {
+    ensureLoaded(importName);
+  }
+
+  return registry;
+}
+
+function expandParsedDocument(root: ParsedDslDocument, registry: Map<string, ParsedDslDocument>): ParsedDslDocument {
+  const expanded = inlineCircuit(root, '', registry, root.circuit?.imports ?? []);
+  return {
+    ...root,
+    combinators: expanded.combinators,
+    wireNetworks: expanded.wireNetworks,
+    tests: root.tests
+  };
+}
+
+function inlineCircuit(
+  doc: ParsedDslDocument,
+  prefix: string,
+  registry: Map<string, ParsedDslDocument>,
+  allowedImports: string[]
+): { combinators: ParsedCombinator[]; wireNetworks: ParsedWireNetwork[]; ioMap: Map<string, string> } {
+  const combinators: ParsedCombinator[] = [];
+  const wireNetworks: ParsedWireNetwork[] = [];
+  const ioMap = new Map<string, string>();
+  const subIoByInstance = new Map<string, Map<string, string>>();
+
+  for (const combinator of doc.combinators) {
+    if (combinator.kind === 'circuit') {
+      const importName = combinator.circuitName;
+      if (!importName) {
+        throw new Error(`Circuit combinator '${combinator.id}' is missing an import name.`);
+      }
+      if (!allowedImports.includes(importName)) {
+        throw new Error(`Circuit combinator '${combinator.id}' references '${importName}' which is not listed in imports.`);
+      }
+      const imported = registry.get(importName);
+      if (!imported) {
+        throw new Error(`Imported circuit '${importName}' not found.`);
+      }
+
+      const sub = inlineCircuit(imported, `${prefix}${combinator.id}::`, registry, imported.circuit?.imports ?? []);
+      combinators.push(...sub.combinators);
+      wireNetworks.push(...sub.wireNetworks);
+      subIoByInstance.set(combinator.id, sub.ioMap);
+      continue;
+    }
+
+    const expandedId = `${prefix}${combinator.id}`;
+    const expandedCombinator: ParsedCombinator = {
+      ...combinator,
+      id: expandedId
+    };
+    combinators.push(expandedCombinator);
+    if (combinator.kind === 'input' || combinator.kind === 'output') {
+      ioMap.set(combinator.id, expandedId);
+    }
+  }
+
+  for (const network of doc.wireNetworks) {
+    const expandedEdges: ParsedWireEdge[] = network.edges.map((edge) => ({
+      from: resolveExpandedEndpoint(edge.from, prefix, subIoByInstance),
+      to: resolveExpandedEndpoint(edge.to, prefix, subIoByInstance)
+    }));
+
+    wireNetworks.push({
+      id: prefix ? `${prefix}${network.id}` : network.id,
+      color: network.color,
+      edges: expandedEdges
+    });
+  }
+
+  return { combinators, wireNetworks, ioMap };
+}
+
+function resolveExpandedEndpoint(
+  endpoint: ParsedWireEndpoint,
+  prefix: string,
+  subIoByInstance: Map<string, Map<string, string>>
+): ParsedWireEndpoint {
+  if (endpoint.subIoId) {
+    const instanceMap = subIoByInstance.get(endpoint.combinatorId);
+    if (!instanceMap) {
+      throw new Error(`Unknown subcircuit instance '${endpoint.combinatorId}' in wire endpoint.`);
+    }
+    const resolved = instanceMap.get(endpoint.subIoId);
+    if (!resolved) {
+      throw new Error(`Unknown subcircuit endpoint '${endpoint.subIoId}' on '${endpoint.combinatorId}'.`);
+    }
+    return {
+      combinatorId: resolved,
+      port: endpoint.port
+    };
+  }
+
+  return {
+    combinatorId: `${prefix}${endpoint.combinatorId}`,
+    port: endpoint.port
+  };
 }

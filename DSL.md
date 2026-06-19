@@ -10,13 +10,31 @@ Design goals:
 
 Sections
 
-The document has up to 3 top-level sections:
+The document has up to 4 top-level sections:
+
+- `circuit: <name>`
 
 - `combinators:`
 - `wires:`
 - `tests:`
 
 Sections can appear in any order. Missing sections are allowed.
+
+Circuit metadata section
+
+Optional top-level declaration:
+
+- `circuit: <circuit_name>`
+
+Body keys:
+
+- `description: <arbitrary text>`
+- `imports: <space-separated circuit names>`
+
+Rules:
+
+- If `circuit:` is present, `<circuit_name>` must match the source filename stem before `.circuit-dsl` (or `.circuit_dsl`) or compilation fails.
+- Imported circuits are loaded from files relative to the current DSL file.
 
 Indentation and formatting
 
@@ -59,6 +77,9 @@ Kinds:
 - `decider`
 - `selector`
 - `pole <entity-name>`
+- `input <entity-name>`
+- `output <entity-name>`
+- `circuit <imported-circuit-name>`
 
 `<combinator-id>` is a string key used by wires/tests. If it is a positive integer string (for example `1`), it is used as the entity number when possible.
 
@@ -136,6 +157,22 @@ Declaration form:
 
 Poles are wiring junctions only and do not produce/transform signals.
 
+Input / Output
+
+- `input` and `output` are pole-equivalent in blueprint shape.
+- They mark interface points for other circuits.
+
+Circuit combinator
+
+Declaration form:
+
+- `<id>: circuit <imported-circuit-name>`
+
+Notes:
+
+- Circuit combinators represent embedded imported circuits.
+- They do not support a body.
+
 Wires section
 
 Wire networks are declared by header:
@@ -145,10 +182,13 @@ Wire networks are declared by header:
 Then one or more edges:
 
 - `<from-id> <in|out> -> <to-id> <in|out>`
+- `<from-id> <in|out> -> <subcircuit-id> <input-or-output-id>`
+- `<subcircuit-id> <input-or-output-id> -> <to-id> <in|out>`
 
 Connector semantics:
 
 - `constant` and `pole` use one shared connector (`in`/`out` are accepted and treated the same).
+- `input` and `output` are one-connector (pole-equivalent).
 - `arithmetic`, `decider`, `selector` are two-sided:
   - `in` -> connector 1
   - `out` -> connector 2
@@ -190,6 +230,13 @@ Compile behavior
 - `networks` metadata (for test network references)
 - `entities` map from DSL combinator id to entity number
 - parsed `tests`
+
+Subcircuit embedding behavior:
+
+- Imported DSLs are loaded recursively and inlined during compilation.
+- Embedded circuit combinators become normal combinators in the compiled blueprint.
+- Wires to `<subcircuit-id> <io-id>` resolve to imported `input`/`output` combinators.
+- Simulation behaves as if imported combinators were authored inline in the root circuit.
 
 Test behavior
 
