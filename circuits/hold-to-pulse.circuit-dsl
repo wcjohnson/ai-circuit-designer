@@ -1,0 +1,113 @@
+// Function:
+// Converts held input signals into one-tick change pulses carrying current input values.
+// Channels:
+// IN (input): red held signal snapshot to watch for changes.
+// OUT (output): red one-tick pulse of current IN values whenever IN changes.
+circuit: hold-to-pulse
+
+combinators:
+  IN: io medium-electric-pole
+  OUT: io medium-electric-pole
+
+  PREV: arithmetic
+    each R + 0 -> each
+
+  DELTA: arithmetic
+    each R - each G -> each
+
+  CHANGED: decider
+    conditions:
+      anything R != 0
+    outputs:
+      "P" = 1
+
+  PULSE: arithmetic
+    each R * "P" G -> each
+
+wires:
+  network InputNow: red
+    IN -> PREV in
+    IN -> DELTA in
+    IN -> PULSE in
+
+  network PrevState: green
+    PREV out -> DELTA in
+
+  network DeltaDetect: red
+    DELTA out -> CHANGED in
+
+  network PulseGate: green
+    CHANGED out -> PULSE in
+
+  network PulseOut: red
+    PULSE out -> OUT
+
+tests:
+  idle-has-no-pulse:
+    tick 5:
+      assert signal "A" = 0 on output OUT red
+      assert signal "B" = 0 on output OUT red
+
+  held-signal-emits-single-pulse:
+    tick 0:
+      apply signal "A" = 7 to input IN red continuously
+    tick 2:
+      assert signal "A" = 0 on output OUT red
+    tick 3:
+      assert signal "A" = 7 on output OUT red
+    tick 4:
+      assert signal "A" = 0 on output OUT red
+    tick 10:
+      assert signal "A" = 0 on output OUT red
+
+  change-emits-current-values-once:
+    tick 0:
+      apply signal "A" = 7 to input IN red continuously
+      apply signal "B" = 2 to input IN red continuously
+    tick 2:
+      assert signal "A" = 0 on output OUT red
+      assert signal "B" = 0 on output OUT red
+    tick 3:
+      assert signal "A" = 7 on output OUT red
+      assert signal "B" = 2 on output OUT red
+    tick 4:
+      assert signal "A" = 0 on output OUT red
+      assert signal "B" = 0 on output OUT red
+    tick 6:
+      apply signal "A" = 11 to input IN red continuously
+    tick 8:
+      assert signal "A" = 0 on output OUT red
+      assert signal "B" = 0 on output OUT red
+    tick 9:
+      assert signal "A" = 11 on output OUT red
+      assert signal "B" = 2 on output OUT red
+    tick 10:
+      assert signal "A" = 0 on output OUT red
+      assert signal "B" = 0 on output OUT red
+
+  removing-one-signal-pulses-latest-snapshot:
+    tick 0:
+      apply signal "A" = 7 to input IN red continuously
+      apply signal "B" = 4 to input IN red continuously
+    tick 6:
+      apply signal "A" = 0 to input IN red continuously
+    tick 8:
+      assert signal "A" = 0 on output OUT red
+      assert signal "B" = 0 on output OUT red
+    tick 9:
+      assert signal "A" = 0 on output OUT red
+      assert signal "B" = 4 on output OUT red
+    tick 10:
+      assert signal "A" = 0 on output OUT red
+      assert signal "B" = 0 on output OUT red
+
+  output-pollution-does-not-corrupt-state:
+    tick 0:
+      apply signal "Z" = 123 to output OUT red continuously
+    tick 5:
+      assert signal "Z" = 0 on network PrevState
+    tick 6:
+      apply signal "A" = 9 to input IN red continuously
+    tick 8:
+      assert signal "A" = 9 on network PrevState
+      assert signal "Z" = 0 on network PrevState
