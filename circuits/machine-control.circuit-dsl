@@ -137,79 +137,79 @@ wires:
 tests:
   no-request-produces-no-write:
     tick 2:
-      assert signal "A" = 0 on output M_WRITE red
-      assert signal "B" = 0 on output M_WRITE red
+      assert signal "A" = 0 on pin M_WRITE red
+      assert signal "B" = 0 on pin M_WRITE red
 
   selects-most-requested-when-idle:
     tick 0:
-      apply signal "A" = 12 to input REQ red continuously
-      apply signal "B" = 8 to input REQ red continuously
+      apply signal "A" = 12 to pin REQ red continuously
+      apply signal "B" = 8 to pin REQ red continuously
     tick 6:
-      assert signal "A" = 12 on output M_WRITE red
-      assert signal "B" = 0 on output M_WRITE red
+      assert signal "A" = 12 on pin M_WRITE red
+      assert signal "B" = 0 on pin M_WRITE red
 
   mirrors-machine-needs-to-needs-output:
     tick 0:
-      apply signal item(iron-plate) = 3 to input M_READ red continuously
-      apply signal item(copper-plate) = 2 to input M_READ red continuously
+      apply signal item(iron-plate) = 3 to pin M_READ red continuously
+      apply signal item(copper-plate) = 2 to pin M_READ red continuously
     tick 2:
-      assert signal item(iron-plate) = 3 on output NEEDS red
-      assert signal item(copper-plate) = 2 on output NEEDS red
+      assert signal item(iron-plate) = 3 on pin NEEDS red
+      assert signal item(copper-plate) = 2 on pin NEEDS red
 
   switches-when-current-recipe-is-no-longer-requested:
     tick 0:
-      apply signal "A" = 12 to input REQ red continuously
-      apply signal "B" = 8 to input REQ red continuously
+      apply signal "A" = 12 to pin REQ red continuously
+      apply signal "B" = 8 to pin REQ red continuously
     tick 8:
-      assert signal "A" = 12 on output M_WRITE red
+      assert signal "A" = 12 on pin M_WRITE red
     tick 20:
-      apply signal "A" = 0 to input REQ red continuously
+      apply signal "A" = 0 to pin REQ red continuously
     tick 40:
-      assert signal "B" = 8 on output M_WRITE red
+      assert signal "B" = 8 on pin M_WRITE red
 
   relatches-when-new-request-appears-after-empty-gap:
     tick 0:
-      apply signal "A" = 12 to input REQ red continuously
+      apply signal "A" = 12 to pin REQ red continuously
     tick 8:
-      assert signal "A" = 12 on output M_WRITE red
+      assert signal "A" = 12 on pin M_WRITE red
     tick 20:
-      apply signal "A" = 0 to input REQ red continuously
+      apply signal "A" = 0 to pin REQ red continuously
     tick 40:
-      assert signal "A" = 12 on output M_WRITE red
-      assert signal "B" = 0 on output M_WRITE red
+      assert signal "A" = 12 on pin M_WRITE red
+      assert signal "B" = 0 on pin M_WRITE red
     tick 60:
-      apply signal "B" = 9 to input REQ red continuously
+      apply signal "B" = 9 to pin REQ red continuously
     tick 80:
-      assert signal "B" = 9 on output M_WRITE red
+      assert signal "B" = 9 on pin M_WRITE red
 
   timeout-advances-index-and-holds-next-requested:
     tick 0:
-      apply signal "A" = 12 to input REQ red continuously
-      apply signal "B" = 8 to input REQ red continuously
-      apply signal item(iron-plate) = 10 to input M_READ red continuously
-      apply signal item(iron-plate) = 0 to input AVAIL red continuously
+      apply signal "A" = 12 to pin REQ red continuously
+      apply signal "B" = 8 to pin REQ red continuously
+      apply signal item(iron-plate) = 10 to pin M_READ red continuously
+      apply signal item(iron-plate) = 0 to pin AVAIL red continuously
     tick 100:
-      assert signal "A" = 12 on output M_WRITE red
+      assert signal "A" = 12 on pin M_WRITE red
     tick 315:
-      assert signal "B" = 8 on output M_WRITE red
+      assert signal "B" = 8 on pin M_WRITE red
     tick 330:
-      assert signal "B" = 8 on output M_WRITE red
+      assert signal "B" = 8 on pin M_WRITE red
 
   copper-wire-times-out-then-switches-to-iron-pole:
     tick 0:
-      apply signal item(copper-wire) = 100 to input REQ red continuously
-      apply signal item(iron-pole) = 50 to input REQ red continuously
-      apply signal item(copper-plate) = 2 to input M_READ red continuously
-      apply signal item(copper-plate) = 0 to input AVAIL red continuously
-      apply signal item(iron-plate) = 20 to input AVAIL red continuously
+      apply signal item(copper-wire) = 100 to pin REQ red continuously
+      apply signal item(iron-pole) = 50 to pin REQ red continuously
+      apply signal item(copper-plate) = 2 to pin M_READ red continuously
+      apply signal item(copper-plate) = 0 to pin AVAIL red continuously
+      apply signal item(iron-plate) = 20 to pin AVAIL red continuously
     tick 100:
-      assert signal item(copper-wire) = 100 on output M_WRITE red
-      assert signal item(iron-pole) = 0 on output M_WRITE red
+      assert signal item(copper-wire) = 100 on pin M_WRITE red
+      assert signal item(iron-pole) = 0 on pin M_WRITE red
     tick 315:
-      assert signal item(iron-pole) = 50 on output M_WRITE red
-      apply signal item(copper-plate) = 0 to input M_READ red continuously
-      apply signal item(iron-plate) = 2 to input M_READ red continuously
+      assert signal item(iron-pole) = 50 on pin M_WRITE red
+      apply signal item(copper-plate) = 0 to pin M_READ red continuously
+      apply signal item(iron-plate) = 2 to pin M_READ red continuously
     tick 340:
-      assert signal item(iron-pole) = 50 on output M_WRITE red
-      assert signal item(copper-wire) = 0 on output M_WRITE red
+      assert signal item(iron-pole) = 50 on pin M_WRITE red
+      assert signal item(copper-wire) = 0 on pin M_WRITE red
 

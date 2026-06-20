@@ -187,7 +187,7 @@ interface DslApplyIoSignalAction {
   tick: number;
   signal: SignalID;
   value: number;
-  side: 'input' | 'output' | 'io';
+  side: 'pin';
   combinatorId: string;
   wire: WireColor;
 }
@@ -197,7 +197,7 @@ interface DslApplyIoSignalContinuousAction {
   tick: number;
   signal: SignalID;
   value: number;
-  side: 'input' | 'output' | 'io';
+  side: 'pin';
   combinatorId: string;
   wire: WireColor;
 }
@@ -215,7 +215,7 @@ interface DslAssertIoSignalAction {
   tick: number;
   signal: SignalID;
   value: number;
-  side: 'input' | 'output' | 'io';
+  side: 'pin';
   combinatorId: string;
   wire: WireColor;
 }
@@ -766,16 +766,16 @@ function parseTestActions(lines: SourceLine[], testName: string): DslTestAction[
 }
 
 function parseSingleTickAction(text: string, line: number, tick: number): DslTestAction {
-  const applyIoContinuousMatch = /^apply\s+signal\s+(.+?)\s*=\s*(-?\d+)\s+to\s+(input|output|io)\s+(.+?)\s+(red|green)\s+continuously$/i.exec(text);
+  const applyIoContinuousMatch = /^apply\s+signal\s+(.+?)\s*=\s*(-?\d+)\s+to\s+pin\s+(.+?)\s+(red|green)\s+continuously$/i.exec(text);
   if (applyIoContinuousMatch) {
     return {
       kind: 'apply-io-signal-continuous',
       tick,
       signal: parseSignalToken(applyIoContinuousMatch[1], line),
       value: Number(applyIoContinuousMatch[2]),
-      side: applyIoContinuousMatch[3].toLowerCase() as 'input' | 'output' | 'io',
-      combinatorId: applyIoContinuousMatch[4].trim(),
-      wire: applyIoContinuousMatch[5].toLowerCase() as WireColor
+      side: 'pin',
+      combinatorId: applyIoContinuousMatch[3].trim(),
+      wire: applyIoContinuousMatch[4].toLowerCase() as WireColor
     };
   }
 
@@ -801,16 +801,16 @@ function parseSingleTickAction(text: string, line: number, tick: number): DslTes
     };
   }
 
-  const applyIoMatch = /^apply\s+signal\s+(.+?)\s*=\s*(-?\d+)\s+to\s+(input|output|io)\s+(.+?)\s+(red|green)$/i.exec(text);
+  const applyIoMatch = /^apply\s+signal\s+(.+?)\s*=\s*(-?\d+)\s+to\s+pin\s+(.+?)\s+(red|green)$/i.exec(text);
   if (applyIoMatch) {
     return {
       kind: 'apply-io-signal',
       tick,
       signal: parseSignalToken(applyIoMatch[1], line),
       value: Number(applyIoMatch[2]),
-      side: applyIoMatch[3].toLowerCase() as 'input' | 'output' | 'io',
-      combinatorId: applyIoMatch[4].trim(),
-      wire: applyIoMatch[5].toLowerCase() as WireColor
+      side: 'pin',
+      combinatorId: applyIoMatch[3].trim(),
+      wire: applyIoMatch[4].toLowerCase() as WireColor
     };
   }
 
@@ -837,16 +837,16 @@ function parseSingleTickAction(text: string, line: number, tick: number): DslTes
     };
   }
 
-  const assertIoMatch = /^assert\s+signal\s+(.+?)\s*=\s*(-?\d+)\s+on\s+(input|output|io)\s+(.+?)\s+(red|green)$/i.exec(text);
+  const assertIoMatch = /^assert\s+signal\s+(.+?)\s*=\s*(-?\d+)\s+on\s+pin\s+(.+?)\s+(red|green)$/i.exec(text);
   if (assertIoMatch) {
     return {
       kind: 'assert-io-signal',
       tick,
       signal: parseSignalToken(assertIoMatch[1], line),
       value: Number(assertIoMatch[2]),
-      side: assertIoMatch[3].toLowerCase() as 'input' | 'output' | 'io',
-      combinatorId: assertIoMatch[4].trim(),
-      wire: assertIoMatch[5].toLowerCase() as WireColor
+      side: 'pin',
+      combinatorId: assertIoMatch[3].trim(),
+      wire: assertIoMatch[4].toLowerCase() as WireColor
     };
   }
 
@@ -869,6 +869,7 @@ function compileBlueprint(parsed: ParsedDslDocument): {
   const entities = [] as FactorioBlueprint['entities'];
   const entityNumberById = new Map<string, number>();
   const kindById = new Map<string, CombinatorKind>();
+  const layoutById = computeBlueprintLayout(parsed.combinators, parsed.wireNetworks);
   const usedEntityNumbers = new Set<number>();
 
   let fallbackEntityNumber = 1;
@@ -883,7 +884,12 @@ function compileBlueprint(parsed: ParsedDslDocument): {
     entityNumberById.set(combinator.id, entityNumber);
     kindById.set(combinator.id, combinator.kind);
 
-    entities.push(buildEntity(combinator, entityNumber, entities.length));
+    const position = layoutById.get(combinator.id);
+    if (!position) {
+      throw new Error(`Warning: could not place combinator '${combinator.id}' in layout.`);
+    }
+
+    entities.push(buildEntity(combinator, entityNumber, position));
   }
 
   const wiresByEntity = new Map<number, BlueprintWire[]>();
@@ -966,10 +972,103 @@ function compileBlueprint(parsed: ParsedDslDocument): {
   };
 }
 
-function buildEntity(combinator: ParsedCombinator, entityNumber: number, index: number) {
+function computeBlueprintLayout(
+  combinators: ParsedCombinator[],
+  wireNetworks: ParsedWireNetwork[]
+): Map<string, { x: number; y: number }> {
+  const GRID_SIZE = 9;
+  const occupancy: boolean[][] = Array.from({ length: GRID_SIZE + 1 }, () => Array.from({ length: GRID_SIZE + 1 }, () => false));
+  const kindById = new Map(combinators.map((combinator) => [combinator.id, combinator.kind]));
+  const ioById = new Set(combinators.filter((combinator) => combinator.kind === 'io').map((combinator) => combinator.id));
+
+  const ioSource = new Set<string>();
+  const ioSink = new Set<string>();
+  for (const network of wireNetworks) {
+    for (const edge of network.edges) {
+      if (ioById.has(edge.from.combinatorId)) {
+        ioSource.add(edge.from.combinatorId);
+      }
+      if (ioById.has(edge.to.combinatorId)) {
+        ioSink.add(edge.to.combinatorId);
+      }
+    }
+  }
+
+  const positions = new Map<string, { x: number; y: number }>();
+
+  const place = (combinator: ParsedCombinator, columns: number[]): void => {
+    const height = combinator.kind === 'constant' || combinator.kind === 'pole' || combinator.kind === 'io' ? 1 : 2;
+    for (let topRow = 1; topRow <= GRID_SIZE - height + 1; topRow += 1) {
+      for (const column of columns) {
+        let canPlace = true;
+        for (let row = topRow; row < topRow + height; row += 1) {
+          if (occupancy[column]?.[row]) {
+            canPlace = false;
+            break;
+          }
+        }
+
+        if (!canPlace) {
+          continue;
+        }
+
+        for (let row = topRow; row < topRow + height; row += 1) {
+          occupancy[column]![row] = true;
+        }
+
+        positions.set(combinator.id, {
+          x: column - 0.5,
+          y: height === 1 ? topRow - 0.5 : topRow
+        });
+        return;
+      }
+    }
+
+    throw new Error(`Warning: circuit cannot fit into a 9x9 blueprint grid (failed placing '${combinator.id}').`);
+  };
+
+  for (const combinator of combinators) {
+    if (combinator.kind !== 'io') {
+      continue;
+    }
+
+    const isInput = ioSource.has(combinator.id) && !ioSink.has(combinator.id);
+    if (isInput) {
+      place(combinator, [1]);
+    }
+  }
+
+  for (const combinator of combinators) {
+    if (combinator.kind !== 'io') {
+      continue;
+    }
+
+    const isOutput = ioSink.has(combinator.id) && !ioSource.has(combinator.id);
+    if (isOutput) {
+      place(combinator, [9]);
+    }
+  }
+
+  for (const combinator of combinators) {
+    if (positions.has(combinator.id)) {
+      continue;
+    }
+
+    if (kindById.get(combinator.id) === 'io') {
+      place(combinator, [2, 3, 4, 5, 6, 7, 8]);
+      continue;
+    }
+
+    place(combinator, [2, 3, 4, 5, 6, 7, 8]);
+  }
+
+  return positions;
+}
+
+function buildEntity(combinator: ParsedCombinator, entityNumber: number, position: { x: number; y: number }) {
   const base = {
     entity_number: entityNumber,
-    position: { x: index * 2, y: 0 }
+    position
   };
 
   if (combinator.kind === 'constant') {
@@ -1347,7 +1446,7 @@ function describeAssertion(action: DslAssertNetworkSignalAction | DslAssertIoSig
 function resolveIoNetworkTarget(
   testName: string,
   tick: number,
-  side: 'input' | 'output' | 'io',
+  side: 'pin',
   combinatorId: string,
   wire: WireColor,
   networkById: Map<string, DslCompiledNetwork>,

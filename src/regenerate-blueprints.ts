@@ -38,7 +38,18 @@ async function main(): Promise<void> {
 
   for (const dslPath of dslPaths) {
     const dslSource = readFileSync(dslPath, 'utf8');
-    const compiled = compileDsl(dslSource, { includeBlueprintString: true, sourcePath: dslPath });
+    let compiled;
+    try {
+      compiled = compileDsl(dslSource, { includeBlueprintString: true, sourcePath: dslPath });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.startsWith('Warning:')) {
+        process.stderr.write(`${message}\n`);
+        process.stderr.write(`Skipped ${dslPath}\n`);
+        continue;
+      }
+      throw error;
+    }
 
     let outputBase = dslPath;
     if (outputBase.endsWith('.circuit-dsl')) {

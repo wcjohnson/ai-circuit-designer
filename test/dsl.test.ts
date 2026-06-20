@@ -110,10 +110,10 @@ wires:
 tests:
   io-targets:
     tick 0:
-      apply signal "A" = 3 to io SRC red continuously
+      apply signal "A" = 3 to pin SRC red continuously
     tick 2:
-      assert signal "A" = 3 on io SRC red
-      assert signal "B" = 6 on io SINK red
+      assert signal "A" = 3 on pin SRC red
+      assert signal "B" = 6 on pin SINK red
 `;
 
   const result = runDslTests(source);
@@ -122,7 +122,7 @@ tests:
   assert.equal(result.tests[0]?.passed, true);
 });
 
-test('runDslTests requires explicit wire color on io apply/assert actions', () => {
+test('runDslTests requires explicit wire color on pin apply/assert actions', () => {
   const source = `
 combinators:
   SRC: io medium-electric-pole
@@ -139,7 +139,7 @@ wires:
 tests:
   missing-color:
     tick 0:
-      apply signal "A" = 3 to io SRC continuously
+      apply signal "A" = 3 to pin SRC continuously
 `;
 
   assert.throws(
@@ -416,6 +416,54 @@ wires:
   assert.throws(
     () => compileDsl(source),
     /must specify 'in' or 'out'/
+  );
+});
+
+test('compileDsl packs entities into 9x9 and pins io input/output columns', () => {
+  const source = `
+combinators:
+  IN: io medium-electric-pole
+  OUT: io medium-electric-pole
+  A: arithmetic
+    "A" R * 1 -> "A"
+
+wires:
+  network N1: red
+    IN -> A in
+  network N2: red
+    A out -> OUT
+`;
+
+  const compiled = compileDsl(source);
+  const entityById = new Map(Object.entries(compiled.entities));
+
+  const inEntity = compiled.blueprint.entities.find((entity) => entity.entity_number === Number(entityById.get('IN')));
+  const outEntity = compiled.blueprint.entities.find((entity) => entity.entity_number === Number(entityById.get('OUT')));
+  assert.ok(inEntity);
+  assert.ok(outEntity);
+  assert.equal(inEntity?.position.x, 0.5);
+  assert.equal(outEntity?.position.x, 8.5);
+
+  for (const entity of compiled.blueprint.entities) {
+    assert.ok(entity.position.x >= 0.5 && entity.position.x <= 8.5);
+    assert.ok(entity.position.y >= 0.5 && entity.position.y <= 8.5);
+  }
+});
+
+test('compileDsl warns when circuit cannot fit in 9x9 grid', () => {
+  const arithmeticLines = Array.from({ length: 29 }, (_, index) => {
+    const id = `A${index + 1}`;
+    return `  ${id}: arithmetic\n    "A" R * 1 -> "A"`;
+  }).join('\n');
+
+  const source = `
+combinators:
+${arithmeticLines}
+`;
+
+  assert.throws(
+    () => compileDsl(source),
+    /Warning: circuit cannot fit into a 9x9 blueprint grid/
   );
 });
 

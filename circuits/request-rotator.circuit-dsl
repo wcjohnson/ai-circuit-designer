@@ -39,6 +39,7 @@ wires:
     INDEX_NEXT out -> INDEX_WRAP in
   network IndexToSelect: green
     INDEX_WRAP out -> SELECT_REQ in
+    INDEX_NEXT out -> SELECT_REQ in
   network ReqCount: green
     COUNT_REQ out -> INDEX_WRAP in
 
@@ -48,24 +49,40 @@ wires:
 tests:
   no-request-produces-no-output:
     tick 3:
-      assert signal "A" = 0 on output SELECTED red
-      assert signal "B" = 0 on output SELECTED red
+      assert signal "A" = 0 on pin SELECTED red
+      assert signal "B" = 0 on pin SELECTED red
 
   selects-most-requested-when-idle:
     tick 0:
-      apply signal "A" = 12 to input REQ red continuously
-      apply signal "B" = 8 to input REQ red continuously
+      apply signal "A" = 12 to pin REQ red continuously
+      apply signal "B" = 8 to pin REQ red continuously
     tick 6:
-      assert signal "A" = 12 on output SELECTED red
-      assert signal "B" = 0 on output SELECTED red
+      assert signal "A" = 12 on pin SELECTED red
+      assert signal "B" = 0 on pin SELECTED red
 
   step-pulse-advances-selection:
     tick 0:
-      apply signal "A" = 12 to input REQ red continuously
-      apply signal "B" = 8 to input REQ red continuously
+      apply signal "A" = 12 to pin REQ red continuously
+      apply signal "B" = 8 to pin REQ red continuously
     tick 6:
-      assert signal "A" = 12 on output SELECTED red
+      assert signal "A" = 12 on pin SELECTED red
     tick 7:
-      apply signal "D" = 1 to input STEP red
+      apply signal "D" = 1 to pin STEP red
     tick 10:
-      assert signal "B" = 8 on output SELECTED red
+      assert signal "B" = 8 on pin SELECTED red
+
+  step-pulse-does-not-flicker-index:
+    tick 0:
+      apply signal "A" = 12 to pin REQ red continuously
+      apply signal "B" = 8 to pin REQ red continuously
+    tick 7:
+      apply signal "D" = 1 to pin STEP red
+    tick 10:
+      assert signal "I" = 1 on network IndexToSelect
+      assert signal "B" = 8 on pin SELECTED red
+    tick 11:
+      assert signal "I" = 1 on network IndexToSelect
+      assert signal "B" = 8 on pin SELECTED red
+    tick 12:
+      assert signal "I" = 1 on network IndexToSelect
+      assert signal "B" = 8 on pin SELECTED red

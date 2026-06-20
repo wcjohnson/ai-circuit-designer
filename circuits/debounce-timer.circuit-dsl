@@ -59,44 +59,44 @@ wires:
 tests:
   idle-has-no-timeout:
     tick 0:
-      apply signal "H" = 150 to input TIMEOUT_IN green continuously
+      apply signal "H" = 150 to pin TIMEOUT_IN green continuously
     tick 5:
-      assert signal "O" = 0 on output OUT red
+      assert signal "O" = 0 on pin OUT red
 
   wait-reaches-timeout-after-threshold:
     tick 0:
-      apply signal "W" = 1 to input WAIT_IN red continuously
-      apply signal "H" = 150 to input TIMEOUT_IN green continuously
+      apply signal "W" = 1 to pin WAIT_IN red continuously
+      apply signal "H" = 150 to pin TIMEOUT_IN green continuously
     tick 200:
-      assert signal "O" = 0 on output OUT red
+      assert signal "O" = 0 on pin OUT red
     tick 320:
-      assert signal "O" = 1 on output OUT red
+      assert signal "O" = 1 on pin OUT red
 
   reset-clears-timeout:
     tick 0:
-      apply signal "W" = 1 to input WAIT_IN red continuously
-      apply signal "H" = 150 to input TIMEOUT_IN green continuously
+      apply signal "W" = 1 to pin WAIT_IN red continuously
+      apply signal "H" = 150 to pin TIMEOUT_IN green continuously
     tick 320:
-      assert signal "O" = 1 on output OUT red
-      apply signal "R" = 1 to input RESET_IN green continuously
+      assert signal "O" = 1 on pin OUT red
+      apply signal "R" = 1 to pin RESET_IN green continuously
     tick 332:
-      assert signal "O" = 0 on output OUT red
+      assert signal "O" = 0 on pin OUT red
 
   non-unit-w-values-do-not-change-timer-rate:
     tick 0:
-      apply signal "W" = 7 to input WAIT_IN red continuously
-      apply signal "H" = 150 to input TIMEOUT_IN green continuously
+      apply signal "W" = 7 to pin WAIT_IN red continuously
+      apply signal "H" = 150 to pin TIMEOUT_IN green continuously
     tick 200:
-      assert signal "O" = 0 on output OUT red
+      assert signal "O" = 0 on pin OUT red
     tick 320:
-      assert signal "O" = 1 on output OUT red
+      assert signal "O" = 1 on pin OUT red
 
   timeout-counter-stops-growing-after-threshold:
     tick 0:
-      apply signal "W" = 1 to input WAIT_IN red continuously
-      apply signal "H" = 150 to input TIMEOUT_IN green continuously
+      apply signal "W" = 1 to pin WAIT_IN red continuously
+      apply signal "H" = 150 to pin TIMEOUT_IN green continuously
     tick 360:
-      assert signal "O" = 1 on output OUT red
+      assert signal "O" = 1 on pin OUT red
       assert signal "T" = 151 on network CountState
     tick 361:
       assert signal "T" = 150 on network CountState

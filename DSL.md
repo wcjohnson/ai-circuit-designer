@@ -212,13 +212,10 @@ Inside each tick block, supported actions:
 
 - `apply signal <signal> = <integer> to network <network-id>`
 - `apply signal <signal> = <integer> to network <network-id> continuously`
-- `apply signal <signal> = <integer> to input <combinator-id> <red|green>`
-- `apply signal <signal> = <integer> to input <combinator-id> <red|green> continuously`
-- `apply signal <signal> = <integer> to output <combinator-id> <red|green>`
-- `apply signal <signal> = <integer> to output <combinator-id> <red|green> continuously`
+- `apply signal <signal> = <integer> to pin <combinator-id> <red|green>`
+- `apply signal <signal> = <integer> to pin <combinator-id> <red|green> continuously`
 - `assert signal <signal> = <integer> on network <network-id>`
-- `assert signal <signal> = <integer> on input <combinator-id> <red|green>`
-- `assert signal <signal> = <integer> on output <combinator-id> <red|green>`
+- `assert signal <signal> = <integer> on pin <combinator-id> <red|green>`
 - `assert signal <signal> = <integer> on input of <combinator-id>`
 - `assert signal <signal> = <integer> on output of <combinator-id>`
 - `set constant combinator <combinator-id> signals:` plus nested signal assignments
@@ -226,11 +223,11 @@ Inside each tick block, supported actions:
 Test action semantics
 
 - `apply signal`: injects an external input at that tick onto the named network's representative connector.
-- `apply signal ... to input/output <id> <red|green>`: resolves the named endpoint on that wire color to its attached network and injects exactly as a network-targeted apply would.
+- `apply signal ... to pin <id> <red|green>`: resolves the named pin endpoint on that wire color to its attached network and injects exactly as a network-targeted apply would.
 - `apply signal ... continuously`: starts or updates a continuous injected value from that tick onward.
   - continuous values are applied every tick until overridden by another continuous assignment for the same `<network-id>` + `<signal>`.
   - assigning `0` continuously stops the continuous injection for that `<network-id>` + `<signal>`.
-- `assert signal ... on input/output <id> <red|green>`: resolves the named endpoint on that wire color to its attached network and checks the network signal value.
+- `assert signal ... on pin <id> <red|green>`: resolves the named pin endpoint on that wire color to its attached network and checks the network signal value.
 - `set constant combinator ... signals:`:
   - sets an override signal map for that constant combinator starting at that tick,
   - implemented by injecting per-tick deltas vs original blueprint constants.
@@ -247,6 +244,16 @@ Compile behavior
 - `networks` metadata (for test network references)
 - `entities` map from DSL combinator id to entity number
 - parsed `tests`
+
+Blueprint layout behavior:
+
+- Entities are packed into a 9x9 tile grid.
+- Positions use Factorio entity centers.
+  - 1x1 entities (for example poles, io, constants): tile `(col,row)` center is `(col-0.5,row-0.5)`.
+  - 1x2 combinators (arithmetic/decider/selector): top tile row `row` center is `(col-0.5,row)`.
+- Named `io` pins inferred as input-only are placed in column 1.
+- Named `io` pins inferred as output-only are placed in column 9.
+- If a circuit cannot fit in the 9x9 packing constraints, compilation emits a warning and no blueprint output should be produced.
 
 Subcircuit embedding behavior:
 

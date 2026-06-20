@@ -1,0 +1,99 @@
+// Function:
+// Latches any non-zero input value and holds it when input is zero.
+// Channels:
+// IN (input): red value bus where any non-zero snapshot is latched.
+// OUT (output): public red latched value.
+circuit: latch
+
+combinators:
+  IN: io medium-electric-pole
+  OUT: io medium-electric-pole
+
+  OUT_CLEAN: arithmetic
+    each R + 0 -> each
+
+  HAS_INPUT: decider
+    conditions:
+      anything R != 0
+    outputs:
+      "S" = 1
+
+  DATA_DELAY: arithmetic
+    each R + 0 -> each
+
+  CAPTURE: decider
+    conditions:
+      "S" G != 0
+      AND anything R != 0
+    outputs:
+      every = input R
+
+  HOLD: decider
+    conditions:
+      "S" G = 0
+      AND anything R != 0
+    outputs:
+      every = input R
+
+wires:
+  network Input: red
+    IN -> HAS_INPUT in
+    IN -> DATA_DELAY in
+
+  network InputDelayed: red
+    DATA_DELAY out -> CAPTURE in
+
+  network SetGate: green
+    HAS_INPUT out -> CAPTURE in
+    HAS_INPUT out -> HOLD in
+
+  network State: red
+    CAPTURE out -> HOLD in
+    CAPTURE out -> OUT_CLEAN in
+    HOLD out -> HOLD in
+    HOLD out -> OUT_CLEAN in
+
+  network PublicOut: red
+    OUT_CLEAN out -> OUT
+
+tests:
+  no-input-no-output:
+    tick 3:
+      assert signal "A" = 0 on pin OUT red
+      assert signal "B" = 0 on pin OUT red
+
+  nonzero-input-latches:
+    tick 0:
+      apply signal "A" = 5 to pin IN red continuously
+    tick 2:
+      assert signal "A" = 5 on network Input
+    tick 4:
+      assert signal "A" = 5 on pin OUT red
+
+  zero-input-holds-previous-value:
+    tick 0:
+      apply signal "A" = 5 to pin IN red continuously
+    tick 3:
+      apply signal "A" = 0 to pin IN red continuously
+    tick 6:
+      assert signal "A" = 5 on pin OUT red
+
+  nonzero-change-relatches-to-new-input:
+    tick 0:
+      apply signal "A" = 5 to pin IN red continuously
+    tick 4:
+      apply signal "A" = 0 to pin IN red continuously
+      apply signal "B" = 9 to pin IN red continuously
+    tick 8:
+      assert signal "A" = 0 on pin OUT red
+      assert signal "B" = 9 on pin OUT red
+
+  output-pollution-does-not-corrupt-state:
+    tick 0:
+      apply signal "A" = 7 to pin IN red continuously
+    tick 4:
+      assert signal "A" = 7 on pin OUT red
+      apply signal "X" = 99 to pin OUT red
+    tick 6:
+      assert signal "A" = 7 on pin OUT red
+      assert signal "X" = 0 on pin OUT red

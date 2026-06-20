@@ -45,69 +45,69 @@ wires:
 tests:
   idle-has-no-pulse:
     tick 5:
-      assert signal "A" = 0 on output OUT red
-      assert signal "B" = 0 on output OUT red
+      assert signal "A" = 0 on pin OUT red
+      assert signal "B" = 0 on pin OUT red
 
   held-signal-emits-single-pulse:
     tick 0:
-      apply signal "A" = 7 to input IN red continuously
+      apply signal "A" = 7 to pin IN red continuously
     tick 2:
-      assert signal "A" = 0 on output OUT red
+      assert signal "A" = 0 on pin OUT red
     tick 3:
-      assert signal "A" = 7 on output OUT red
+      assert signal "A" = 7 on pin OUT red
     tick 4:
-      assert signal "A" = 0 on output OUT red
+      assert signal "A" = 0 on pin OUT red
     tick 10:
-      assert signal "A" = 0 on output OUT red
+      assert signal "A" = 0 on pin OUT red
 
   change-emits-current-values-once:
     tick 0:
-      apply signal "A" = 7 to input IN red continuously
-      apply signal "B" = 2 to input IN red continuously
+      apply signal "A" = 7 to pin IN red continuously
+      apply signal "B" = 2 to pin IN red continuously
     tick 2:
-      assert signal "A" = 0 on output OUT red
-      assert signal "B" = 0 on output OUT red
+      assert signal "A" = 0 on pin OUT red
+      assert signal "B" = 0 on pin OUT red
     tick 3:
-      assert signal "A" = 7 on output OUT red
-      assert signal "B" = 2 on output OUT red
+      assert signal "A" = 7 on pin OUT red
+      assert signal "B" = 2 on pin OUT red
     tick 4:
-      assert signal "A" = 0 on output OUT red
-      assert signal "B" = 0 on output OUT red
+      assert signal "A" = 0 on pin OUT red
+      assert signal "B" = 0 on pin OUT red
     tick 6:
-      apply signal "A" = 11 to input IN red continuously
+      apply signal "A" = 11 to pin IN red continuously
     tick 8:
-      assert signal "A" = 0 on output OUT red
-      assert signal "B" = 0 on output OUT red
+      assert signal "A" = 0 on pin OUT red
+      assert signal "B" = 0 on pin OUT red
     tick 9:
-      assert signal "A" = 11 on output OUT red
-      assert signal "B" = 2 on output OUT red
+      assert signal "A" = 11 on pin OUT red
+      assert signal "B" = 2 on pin OUT red
     tick 10:
-      assert signal "A" = 0 on output OUT red
-      assert signal "B" = 0 on output OUT red
+      assert signal "A" = 0 on pin OUT red
+      assert signal "B" = 0 on pin OUT red
 
   removing-one-signal-pulses-latest-snapshot:
     tick 0:
-      apply signal "A" = 7 to input IN red continuously
-      apply signal "B" = 4 to input IN red continuously
+      apply signal "A" = 7 to pin IN red continuously
+      apply signal "B" = 4 to pin IN red continuously
     tick 6:
-      apply signal "A" = 0 to input IN red continuously
+      apply signal "A" = 0 to pin IN red continuously
     tick 8:
-      assert signal "A" = 0 on output OUT red
-      assert signal "B" = 0 on output OUT red
+      assert signal "A" = 0 on pin OUT red
+      assert signal "B" = 0 on pin OUT red
     tick 9:
-      assert signal "A" = 0 on output OUT red
-      assert signal "B" = 4 on output OUT red
+      assert signal "A" = 0 on pin OUT red
+      assert signal "B" = 4 on pin OUT red
     tick 10:
-      assert signal "A" = 0 on output OUT red
-      assert signal "B" = 0 on output OUT red
+      assert signal "A" = 0 on pin OUT red
+      assert signal "B" = 0 on pin OUT red
 
   output-pollution-does-not-corrupt-state:
     tick 0:
-      apply signal "Z" = 123 to output OUT red continuously
+      apply signal "Z" = 123 to pin OUT red continuously
     tick 5:
       assert signal "Z" = 0 on network PrevState
     tick 6:
-      apply signal "A" = 9 to input IN red continuously
+      apply signal "A" = 9 to pin IN red continuously
     tick 8:
       assert signal "A" = 9 on network PrevState
       assert signal "Z" = 0 on network PrevState
