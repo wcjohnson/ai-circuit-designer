@@ -1,0 +1,71 @@
+// Function:
+// Maintains a round-robin index over requested recipes and outputs the current selected recipe.
+// Channels:
+// REQ (input): red requested recipes by signal and count.
+// STEP (input): red pulse on D to advance round-robin index.
+// SELECTED (output): red currently selected request at selector output timing.
+circuit: request-rotator
+
+combinators:
+  REQ: io medium-electric-pole
+  STEP: io medium-electric-pole
+  SELECTED: io medium-electric-pole
+
+  COUNT_REQ: selector
+    operation: count
+    count_signal: C
+
+  INDEX_NEXT: arithmetic
+    "I" R + "D" R -> "I"
+  INDEX_WRAP: arithmetic
+    "I" R % "C" G -> "I"
+
+  SELECT_REQ: selector
+    operation: select
+    select_max: true
+    index_signal: I
+
+wires:
+  network ReqBus: red
+    REQ -> COUNT_REQ in
+    REQ -> SELECT_REQ in
+
+  network StepBus: red
+    STEP -> INDEX_NEXT in
+
+  network IndexState: red
+    INDEX_WRAP out -> INDEX_NEXT in
+  network IndexRaw: red
+    INDEX_NEXT out -> INDEX_WRAP in
+  network IndexToSelect: green
+    INDEX_WRAP out -> SELECT_REQ in
+  network ReqCount: green
+    COUNT_REQ out -> INDEX_WRAP in
+
+  network SelectedOut: red
+    SELECT_REQ out -> SELECTED
+
+tests:
+  no-request-produces-no-output:
+    tick 3:
+      assert signal "A" = 0 on output SELECTED red
+      assert signal "B" = 0 on output SELECTED red
+
+  selects-most-requested-when-idle:
+    tick 0:
+      apply signal "A" = 12 to input REQ red continuously
+      apply signal "B" = 8 to input REQ red continuously
+    tick 6:
+      assert signal "A" = 12 on output SELECTED red
+      assert signal "B" = 0 on output SELECTED red
+
+  step-pulse-advances-selection:
+    tick 0:
+      apply signal "A" = 12 to input REQ red continuously
+      apply signal "B" = 8 to input REQ red continuously
+    tick 6:
+      assert signal "A" = 12 on output SELECTED red
+    tick 7:
+      apply signal "D" = 1 to input STEP red
+    tick 10:
+      assert signal "B" = 8 on output SELECTED red

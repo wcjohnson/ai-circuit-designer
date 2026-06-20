@@ -1,3 +1,5 @@
+// Function:
+// Latches red data until reset is asserted, then clears and blocks updates until reset is released.
 // Channels:
 // SIG_IN (input): red data bus to be latched when not reset.
 // RESET_IN (input): green control where non-zero R clears and blocks latch updates while high.

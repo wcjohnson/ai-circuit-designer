@@ -56,6 +56,7 @@ Assumption policy:
 
 1a. Define embeddable circuit metadata.
 - Always include `circuit: <name>` where `<name>` matches the target filename stem.
+- Add a brief top-of-file `//` function summary (1-2 lines) describing what the circuit does.
 - Add a top-of-file `//` multi-line comment block with agent-friendly channel semantics for every interface combinator.
 - For interface combinators, describe each channel by ID and role in one compact sentence, for example:
   - `// Channels: SIG_IN (input): ...; RESET_IN (input): ...; OUT (output): ...`

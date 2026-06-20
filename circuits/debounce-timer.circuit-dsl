@@ -1,9 +1,11 @@
+// Function:
+// Counts sustained wait requests and raises timeout once the configured threshold is reached.
 // Channels:
 // WAIT_IN (input): red W gate; non-zero while waiting should accumulate.
 // RESET_IN (input): green R reset gate; non-zero forces wait gate off.
 // TIMEOUT_IN (input): green H threshold signal that defines when timeout should fire.
 // OUT (output): red O asserted when wait has been continuous long enough.
-circuit: timer
+circuit: debounce-timer
 
 combinators:
   WAIT_IN: io medium-electric-pole

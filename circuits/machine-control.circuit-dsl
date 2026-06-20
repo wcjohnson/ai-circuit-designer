@@ -1,3 +1,5 @@
+// Function:
+// Selects and holds one requested recipe, switches when unrequested or timeout-triggered, and mirrors machine needs.
 // Channels:
 // REQ (input): red outstanding requested recipes by signal and remaining count.
 // M_READ (input): red machine readback including recipe ingredient needs plus control flags F and W.
@@ -5,7 +7,7 @@
 // NEEDS (output): red pass-through of machine read ingredient needs.
 // M_WRITE (output): red selected recipe signal for machine write.
 circuit: machine-control
-  imports: timer s-latch
+  imports: debounce-timer s-latch request-rotator
 
 combinators:
   REQ: io medium-electric-pole
@@ -27,7 +29,7 @@ combinators:
     outputs:
       "W" = 1
 
-  TIMER: circuit timer
+  TIMER: circuit debounce-timer
 
   TIMEOUT_PREV: arithmetic
     "O" R + 0 -> "P"
@@ -57,19 +59,7 @@ combinators:
     outputs:
       "C" = 1
 
-  COUNT_REQ: selector
-    operation: count
-    count_signal: C
-
-  INDEX_NEXT: arithmetic
-    "I" R + "D" R -> "I"
-  INDEX_WRAP: arithmetic
-    "I" R % "C" G -> "I"
-
-  SELECT_REQ: selector
-    operation: select
-    select_max: true
-    index_signal: I
+  ROTATOR: circuit request-rotator
 
   SELECT_DELAY: arithmetic
     each R + 0 -> each
@@ -86,8 +76,7 @@ combinators:
 
 wires:
   network ReqBus: red
-    REQ -> COUNT_REQ in
-    REQ -> SELECT_REQ in
+    REQ -> ROTATOR REQ
     REQ -> SWITCH_IF_UNREQUESTED in
 
   network MReadBus: red
@@ -125,20 +114,11 @@ wires:
     CURRENT_BUF out -> HAS_CURRENT in
 
   network IndexDelta: red
-    INC_ON_TIMEOUT out -> INDEX_NEXT in
-
-  network IndexState: red
-    INDEX_WRAP out -> INDEX_NEXT in
-  network IndexRaw: red
-    INDEX_NEXT out -> INDEX_WRAP in
-  network IndexToSelect: green
-    INDEX_WRAP out -> SELECT_REQ in
-  network ReqCount: green
-    COUNT_REQ out -> INDEX_WRAP in
+    INC_ON_TIMEOUT out -> ROTATOR STEP
 
   network SelectedReq: red
-    SELECT_REQ out -> SET_IF_SELECTED in
-    SELECT_REQ out -> SELECT_DELAY in
+    ROTATOR SELECTED -> SET_IF_SELECTED in
+    ROTATOR SELECTED -> SELECT_DELAY in
 
   network SelectedReqDelayed: red
     SELECT_DELAY out -> RECIPE_HOLD DATA_IN
