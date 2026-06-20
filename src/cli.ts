@@ -22,12 +22,31 @@ type CompactedTickFrame =
   | { kind: 'tick'; tick: TickOutput }
   | { kind: 'identical'; tick: number; throughTick: number };
 
-type Command = 'simulate' | 'simulate-dsl' | 'compile' | 'test' | 'dump';
+type Command = 'simulate' | 'simulate-dsl' | 'compile' | 'test' | 'dump' | 'probe-dsl' | 'emit-dsl';
+
+interface AgentTickNetwork {
+  id: string;
+  s: Record<string, number>;
+}
+
+interface AgentTick {
+  t: number;
+  n: AgentTickNetwork[];
+}
+
+interface AgentIdenticalTickSentinel {
+  t: number;
+  throughT?: number;
+  sameAsPrevious: true;
+}
+
+type AgentCompactedTick = AgentTick | AgentIdenticalTickSentinel;
 
 interface BaseCliOptions {
   json: boolean;
   pretty: boolean;
   help: boolean;
+  agent: boolean;
 }
 
 interface SimulateOptions extends BaseCliOptions {
@@ -54,6 +73,14 @@ interface SimulateDslOptions extends BaseCliOptions {
   includeBlueprint: boolean;
 }
 
+interface ProbeDslOptions extends BaseCliOptions {
+  command: 'probe-dsl';
+  dslPath?: string;
+  inputsPath?: string;
+  ticks: number;
+  includeBlueprint: boolean;
+}
+
 interface TestOptions extends BaseCliOptions {
   command: 'test';
   dslPath?: string;
@@ -66,7 +93,15 @@ interface DumpOptions extends BaseCliOptions {
   blueprint?: string;
 }
 
-type CliOptions = SimulateOptions | SimulateDslOptions | CompileOptions | TestOptions | DumpOptions;
+interface EmitDslOptions extends BaseCliOptions {
+  command: 'emit-dsl';
+  dslPath?: string;
+  includeBlueprintString: boolean;
+  outputBlueprintJsonPath?: string;
+  outputBlueprintStringPath?: string;
+}
+
+type CliOptions = SimulateOptions | SimulateDslOptions | CompileOptions | TestOptions | DumpOptions | ProbeDslOptions | EmitDslOptions;
 
 try {
   const options = parseArgs(process.argv.slice(2));
@@ -86,7 +121,7 @@ try {
     });
 
     if (options.json) {
-      printJson(compactSimulationResultForJson(result), options.pretty);
+      printJson(options.agent ? compactSimulationResultForAgent(result) : compactSimulationResultForJson(result), options.pretty);
     } else {
       process.stdout.write(renderSimulationTable(result));
       process.stdout.write('\n');
@@ -101,9 +136,12 @@ try {
     process.exit(0);
   }
 
-  if (options.command === 'simulate-dsl') {
+  if (options.command === 'simulate-dsl' || options.command === 'probe-dsl') {
     const dslSource = await readDslSource(options.dslPath);
-    const compiled = compileDsl(dslSource, { sourcePath: options.dslPath });
+    const compiled = compileDsl(dslSource, {
+      includeBlueprintString: options.agent && options.includeBlueprint,
+      sourcePath: options.dslPath
+    });
     const externalInputs = options.inputsPath
       ? JSON.parse(await readFile(options.inputsPath, 'utf8')) as ExternalInput[]
       : [];
@@ -123,10 +161,26 @@ try {
     }
 
     if (options.json) {
-      printJson({
-        ...result,
-        simulation: compactSimulationResultForJson(simulation)
-      }, options.pretty);
+      if (options.agent) {
+        const agentResult: Record<string, unknown> = {
+          simulation: compactSimulationResultForAgent(simulation),
+          entities: compiled.entities,
+          networks: compiled.networks.map((network) => ({
+            id: network.id,
+            color: network.color,
+            points: network.points.length
+          }))
+        };
+        if (options.includeBlueprint) {
+          agentResult.blueprintString = compiled.blueprintString ?? writeBlueprintString(compiled.blueprint);
+        }
+        printJson(agentResult, options.pretty);
+      } else {
+        printJson({
+          ...result,
+          simulation: compactSimulationResultForJson(simulation)
+        }, options.pretty);
+      }
     } else {
       process.stdout.write(renderSimulationTable(simulation));
       process.stdout.write('\n');
@@ -135,7 +189,7 @@ try {
   }
 
   const dslSource = await readDslSource(options.dslPath);
-  if (options.command === 'compile') {
+  if (options.command === 'compile' || options.command === 'emit-dsl') {
     const defaultOutputPaths = getDefaultCompileOutputPaths(options.dslPath);
     const outputBlueprintJsonPath = options.outputBlueprintJsonPath ?? defaultOutputPaths?.jsonPath;
     const outputBlueprintStringPath = options.outputBlueprintStringPath ?? defaultOutputPaths?.stringPath;
@@ -155,7 +209,11 @@ try {
       await writeFile(outputBlueprintStringPath, blueprintString, 'utf8');
     }
 
-    printJson(result, options.pretty);
+    if (options.agent) {
+      printJson(compactCompileResultForAgent(result, options.dslPath), options.pretty);
+    } else {
+      printJson(result, options.pretty);
+    }
     process.exit(0);
   }
 
@@ -165,7 +223,7 @@ try {
   });
 
   if (options.json) {
-    printJson(compactDslTestResultForJson(result), options.pretty);
+    printJson(options.agent ? compactDslTestResultForAgent(result) : compactDslTestResultForJson(result), options.pretty);
   } else {
     process.stdout.write(renderDslTestTables(result));
     process.stdout.write('\n');
@@ -177,7 +235,7 @@ try {
 }
 
 function parseArgs(args: string[]): CliOptions {
-  const knownCommands: Command[] = ['simulate', 'simulate-dsl', 'compile', 'test', 'dump'];
+  const knownCommands: Command[] = ['simulate', 'simulate-dsl', 'compile', 'test', 'dump', 'probe-dsl', 'emit-dsl'];
   const commandIndex = args.findIndex((arg) => knownCommands.includes(arg.toLowerCase() as Command));
   const command = (commandIndex >= 0 ? args[commandIndex].toLowerCase() : 'simulate') as Command;
   const commandArgs = commandIndex >= 0
@@ -190,8 +248,14 @@ function parseArgs(args: string[]): CliOptions {
   if (command === 'simulate-dsl') {
     return parseSimulateDslArgs(commandArgs);
   }
+  if (command === 'probe-dsl') {
+    return parseProbeDslArgs(commandArgs);
+  }
   if (command === 'compile') {
     return parseCompileArgs(commandArgs);
+  }
+  if (command === 'emit-dsl') {
+    return parseEmitDslArgs(commandArgs);
   }
   if (command === 'dump') {
     return parseDumpArgs(commandArgs);
@@ -205,7 +269,8 @@ function parseSimulateArgs(args: string[]): SimulateOptions {
     ticks: 3,
     json: false,
     pretty: false,
-    help: false
+    help: false,
+    agent: false
   };
 
   for (let index = 0; index < args.length; index += 1) {
@@ -235,6 +300,9 @@ function parseSimulateArgs(args: string[]): SimulateOptions {
       case '--pretty':
         options.pretty = true;
         break;
+      case '--agent':
+        options.agent = true;
+        break;
       case '--help':
       case '-h':
         options.help = true;
@@ -248,7 +316,7 @@ function parseSimulateArgs(args: string[]): SimulateOptions {
     throw new Error('Use either --input or --blueprint, not both.');
   }
 
-  return options;
+  return finalizeAgentOptions(options);
 }
 
 function parseCompileArgs(args: string[]): CompileOptions {
@@ -257,6 +325,7 @@ function parseCompileArgs(args: string[]): CompileOptions {
     json: false,
     pretty: false,
     help: false,
+    agent: false,
     includeBlueprintString: false
   };
 
@@ -284,6 +353,9 @@ function parseCompileArgs(args: string[]): CompileOptions {
       case '--pretty':
         options.pretty = true;
         break;
+      case '--agent':
+        options.agent = true;
+        break;
       case '--help':
       case '-h':
         options.help = true;
@@ -293,7 +365,7 @@ function parseCompileArgs(args: string[]): CompileOptions {
     }
   }
 
-  return options;
+  return finalizeAgentOptions(options);
 }
 
 function parseSimulateDslArgs(args: string[]): SimulateDslOptions {
@@ -303,6 +375,7 @@ function parseSimulateDslArgs(args: string[]): SimulateDslOptions {
     json: false,
     pretty: false,
     help: false,
+    agent: false,
     includeBlueprint: false
   };
 
@@ -332,6 +405,9 @@ function parseSimulateDslArgs(args: string[]): SimulateDslOptions {
       case '--pretty':
         options.pretty = true;
         break;
+      case '--agent':
+        options.agent = true;
+        break;
       case '--help':
       case '-h':
         options.help = true;
@@ -341,7 +417,59 @@ function parseSimulateDslArgs(args: string[]): SimulateDslOptions {
     }
   }
 
-  return options;
+  return finalizeAgentOptions(options);
+}
+
+function parseProbeDslArgs(args: string[]): ProbeDslOptions {
+  const options: ProbeDslOptions = {
+    command: 'probe-dsl',
+    ticks: 3,
+    json: false,
+    pretty: false,
+    help: false,
+    agent: true,
+    includeBlueprint: false
+  };
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    switch (arg) {
+      case '--dsl':
+      case '-d':
+        options.dslPath = readValue(args, ++index, arg);
+        break;
+      case '--inputs':
+        options.inputsPath = readValue(args, ++index, arg);
+        break;
+      case '--ticks':
+      case '-t':
+        options.ticks = Number(readValue(args, ++index, arg));
+        if (!Number.isInteger(options.ticks) || options.ticks < 1) {
+          throw new Error('--ticks must be a positive integer.');
+        }
+        break;
+      case '--include-blueprint':
+        options.includeBlueprint = true;
+        break;
+      case '--json':
+        options.json = true;
+        break;
+      case '--pretty':
+        options.pretty = true;
+        break;
+      case '--agent':
+        options.agent = true;
+        break;
+      case '--help':
+      case '-h':
+        options.help = true;
+        break;
+      default:
+        throw new Error(`Unknown argument '${arg}'.`);
+    }
+  }
+
+  return finalizeAgentOptions(options);
 }
 
 function parseTestArgs(args: string[]): TestOptions {
@@ -349,7 +477,8 @@ function parseTestArgs(args: string[]): TestOptions {
     command: 'test',
     json: false,
     pretty: false,
-    help: false
+    help: false,
+    agent: false
   };
 
   for (let index = 0; index < args.length; index += 1) {
@@ -368,6 +497,9 @@ function parseTestArgs(args: string[]): TestOptions {
       case '--pretty':
         options.pretty = true;
         break;
+      case '--agent':
+        options.agent = true;
+        break;
       case '--help':
       case '-h':
         options.help = true;
@@ -377,7 +509,7 @@ function parseTestArgs(args: string[]): TestOptions {
     }
   }
 
-  return options;
+  return finalizeAgentOptions(options);
 }
 
 function parseDumpArgs(args: string[]): DumpOptions {
@@ -385,7 +517,8 @@ function parseDumpArgs(args: string[]): DumpOptions {
     command: 'dump',
     json: false,
     pretty: false,
-    help: false
+    help: false,
+    agent: false
   };
 
   for (let index = 0; index < args.length; index += 1) {
@@ -405,6 +538,9 @@ function parseDumpArgs(args: string[]): DumpOptions {
       case '--pretty':
         options.pretty = true;
         break;
+      case '--agent':
+        options.agent = true;
+        break;
       case '--help':
       case '-h':
         options.help = true;
@@ -418,6 +554,63 @@ function parseDumpArgs(args: string[]): DumpOptions {
     throw new Error('Use either --input or --blueprint, not both.');
   }
 
+  return finalizeAgentOptions(options);
+}
+
+function parseEmitDslArgs(args: string[]): EmitDslOptions {
+  const options: EmitDslOptions = {
+    command: 'emit-dsl',
+    json: false,
+    pretty: false,
+    help: false,
+    agent: true,
+    includeBlueprintString: true
+  };
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    switch (arg) {
+      case '--dsl':
+      case '-d':
+        options.dslPath = readValue(args, ++index, arg);
+        break;
+      case '--with-blueprint-string':
+        options.includeBlueprintString = true;
+        break;
+      case '--out-blueprint-json':
+      case '--out-json':
+        options.outputBlueprintJsonPath = readValue(args, ++index, arg);
+        break;
+      case '--out-blueprint-string':
+      case '--out-string':
+        options.outputBlueprintStringPath = readValue(args, ++index, arg);
+        break;
+      case '--json':
+        options.json = true;
+        break;
+      case '--pretty':
+        options.pretty = true;
+        break;
+      case '--agent':
+        options.agent = true;
+        break;
+      case '--help':
+      case '-h':
+        options.help = true;
+        break;
+      default:
+        throw new Error(`Unknown argument '${arg}'.`);
+    }
+  }
+
+  return finalizeAgentOptions(options);
+}
+
+function finalizeAgentOptions<T extends BaseCliOptions>(options: T): T {
+  if (options.agent) {
+    options.json = true;
+    options.pretty = false;
+  }
   return options;
 }
 
@@ -482,7 +675,9 @@ function printHelp(): void {
       'Commands:',
       '  simulate       Simulate a Factorio blueprint (default command).',
       '  simulate-dsl   Compile DSL and simulate in one step (agent-friendly).',
+      '  probe-dsl      Agent-focused DSL probe (compact JSON by default).',
       '  compile        Compile DSL into blueprint JSON (+ optional tests metadata).',
+      '  emit-dsl       Agent-focused DSL compile/emission (compact JSON by default).',
       '  test           Compile DSL and execute DSL tests.',
       '  dump           Parse and print blueprint JSON.',
       '',
@@ -498,12 +693,24 @@ function printHelp(): void {
       '  -t, --ticks <count>       Number of ticks to simulate (default 3)',
       '      --include-blueprint   Include compiled blueprint in output',
       '',
+      'probe-dsl options:',
+      '  -d, --dsl <path>          Read DSL source file (or stdin when omitted)',
+      '      --inputs <path>       Read external input signals JSON',
+      '  -t, --ticks <count>       Number of ticks to simulate (default 3)',
+      '      --include-blueprint   Include compiled blueprint string in output',
+      '',
       'compile options:',
       '  -d, --dsl <path>             Read DSL source file (or stdin when omitted)',
       '      --with-blueprint-string  Include encoded blueprint string in output',
       '      --out-json <path>        Write compiled blueprint JSON to a file',
       '      --out-string <path>      Write compiled blueprint string to a file',
       '                               Default for <name>.circuit-dsl: <name>.blueprint.json/.txt',
+      '',
+      'emit-dsl options:',
+      '  -d, --dsl <path>          Read DSL source file (or stdin when omitted)',
+      '      --out-json <path>     Write compiled blueprint JSON to a file',
+      '      --out-string <path>   Write compiled blueprint string to a file',
+      '                            Default for <name>.circuit-dsl: <name>.blueprint.json/.txt',
       '',
       'test options:',
       '  -d, --dsl <path>       Read DSL source file (or stdin when omitted)',
@@ -514,6 +721,7 @@ function printHelp(): void {
       '  -b, --blueprint <value>  Read blueprint string from CLI argument',
       '',
       'global options:',
+      '      --agent            Force compact agent-oriented JSON output',
       '      --json             Output raw JSON (suppresses TUI tables)',
       '      --pretty           Pretty-print JSON output',
       '  -h, --help             Show this help'
@@ -584,6 +792,42 @@ function compactDslTestResultForJson(result: ReturnType<typeof runDslTests>): un
   };
 }
 
+function compactDslTestResultForAgent(result: ReturnType<typeof runDslTests>): unknown {
+  const failures = result.tests
+    .filter((test) => !test.passed)
+    .map((test) => ({
+      name: test.name,
+      assertions: test.assertions
+        .filter((assertion) => !assertion.passed)
+        .map((assertion) => ({
+          tick: assertion.tick,
+          expected: assertion.expected,
+          actual: assertion.actual,
+          description: assertion.description
+        }))
+    }));
+
+  return {
+    passed: result.passed,
+    total: result.tests.length,
+    failed: failures
+  };
+}
+
+function compactCompileResultForAgent(result: ReturnType<typeof compileDsl>, dslPath: string | undefined): unknown {
+  const blueprintString = result.blueprintString ?? writeBlueprintString(result.blueprint);
+  return {
+    dslPath,
+    entities: result.entities,
+    networks: result.networks.map((network) => ({
+      id: network.id,
+      color: network.color,
+      points: network.points.length
+    })),
+    blueprintString
+  };
+}
+
 function renderSimulationTable(result: SimulationResult): string {
   return renderTickNetworkTable(result.ticks);
 }
@@ -641,6 +885,29 @@ function compactSimulationResultForJson(result: SimulationResult): { ticks: Comp
   return {
     ...result,
     ticks: compactTicks(result.ticks)
+  };
+}
+
+function compactSimulationResultForAgent(result: SimulationResult): { ticks: AgentCompactedTick[]; ignoredEntities: SimulationResult['ignoredEntities'] } {
+  return {
+    ignoredEntities: result.ignoredEntities,
+    ticks: compactTickFrames(result.ticks).map((frame) => {
+      if (frame.kind === 'identical') {
+        return frame.tick === frame.throughTick
+          ? { t: frame.tick, sameAsPrevious: true }
+          : { t: frame.tick, throughT: frame.throughTick, sameAsPrevious: true };
+      }
+
+      const networks = frame.tick.networks
+        .map((network) => ({ id: network.id, s: compactSignalMap(network.signals) }))
+        .filter((network) => Object.keys(network.s).length > 0)
+        .sort((left, right) => left.id.localeCompare(right.id));
+
+      return {
+        t: frame.tick.tick,
+        n: networks
+      };
+    })
   };
 }
 
@@ -727,6 +994,18 @@ function formatSignalMap(signals: Record<string, number> | undefined): string {
     return '-';
   }
   return entries.map(([name, value]) => `${name}=${value}`).join(', ');
+}
+
+function compactSignalMap(signals: Record<string, number> | undefined): Record<string, number> {
+  if (!signals) {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(signals)
+      .filter(([, value]) => value !== 0)
+      .sort(([left], [right]) => left.localeCompare(right))
+  );
 }
 
 function renderAsciiTable(headers: string[], rows: string[][]): string {

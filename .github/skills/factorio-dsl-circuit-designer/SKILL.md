@@ -30,6 +30,7 @@ Use this skill when a user asks for any of the following:
 - "Write DSL for this circuit behavior"
 - "Generate circuit tests for this logic"
 - "Turn this spec into combinators and wires"
+- "Update this circuit design with change X"
 
 Do not use for simulator internals or schema migration tasks unless the request is explicitly to produce DSL text.
 
@@ -96,12 +97,12 @@ Assumption policy:
 - Assert at the correct tick accounting for N -> N+1 combinator output delay.
 - Include output-pollution tests in all circuit designs: simulate unknown external signals applied on public/output-facing networks and verify internal state networks are not corrupted.
 
-6a. Output back-propagation hardening workflow (required for every new circuit design).
-- First, design and run output-pollution tests to determine whether external/public-wire back-propagation can corrupt internal state.
-- Only if those tests indicate harmful pollution risk, add identity buffer combinators before public outputs.
+6a. Signal back-propagation hardening workflow (required for every new circuit design).
+- Design and run input- and output-pollution tests to determine if there is harmful cross-talk between public I/O wires and internal state.
+- Only if those tests indicate harmful pollution risk, add identity buffer combinators before the impacted public inputs and outputs.
 - Identity buffer pattern: arithmetic combinator with `each + 0 -> each`.
 - Naming convention: name pollution-prevention identity buffers with `_CLEAN` suffix (for example `OUT_CLEAN`)
-- Place the identity buffer between internal-state/output-generation network and externally exposed output network.
+- Place the identity buffer between the internal-state network and the externally exposed output pin.
 - After adding the identity buffer, keep or extend the pollution tests so they explicitly prove internal-state isolation.
 
 7. Self-audit before finalizing.
@@ -111,15 +112,16 @@ Assumption policy:
 - Ensure the test suite would fail if core behavior is wrong.
 
 8. Agent reasoning simulation loop (CLI tool).
-- Use the CLI `simulate-dsl` command to compile + simulate quickly during design/debug iterations:
-  - `node dist/src/cli.js simulate-dsl --dsl <path> --ticks <n> --pretty`
+- Use the CLI `probe-dsl` command first for compact agent-oriented compile + simulate iterations:
+  - `node dist/src/cli.js probe-dsl --dsl <path> --ticks <n>`
   - Add `--inputs <path>` when targeted external input injection is needed.
   - Add `--include-blueprint` when you need to inspect compiled entity/wire output while reasoning.
-- Prefer `simulate-dsl` for rapid behavior checks before or alongside `test` assertions.
+- Use `node dist/src/cli.js simulate-dsl ... --pretty` only when expanded human-readable output is needed.
 
 9. Persist artifacts with canonical paths.
 - Write the design file to `circuits/<name>.circuit-dsl`.
 - Compile so outputs land at `circuits/<name>.blueprint.json` and `circuits/<name>.blueprint.txt`.
+- Prefer `node dist/src/cli.js emit-dsl --dsl <path>` for compact agent-oriented compile output that includes a blueprint string.
 - For edits to an existing circuit DSL, treat recompiling and committing refreshed blueprint artifacts as required, not optional.
 
 ## Decision Rules

@@ -1,6 +1,6 @@
-DSL Spec (AI-Friendly)
+# DSL Spec
 
-This file describes the supported DSL consumed by the CLI `compile` and `test` commands.
+This file describes a DSL for Factorio circuits.
 
 Design goals:
 
@@ -13,12 +13,11 @@ Sections
 The document has up to 4 top-level sections:
 
 - `circuit: <name>`
-
 - `combinators:`
 - `wires:`
 - `tests:`
 
-Sections can appear in any order. Missing sections are allowed.
+Sections can appear in any order and can be omitted if they have no content.
 
 Circuit metadata section
 
