@@ -117,6 +117,7 @@ interface ParsedArithmetic {
 }
 
 interface ParsedDeciderOutput {
+  line: number;
   signal: SignalID;
   value: DeciderOutputValue;
 }
@@ -566,6 +567,8 @@ function parseCombinatorBody(combinator: ParsedCombinator, body: SourceLine[]): 
 
       index = nextIndex;
     }
+
+    validateDeciderWildcardOutputs(combinator);
 
     return;
   }
@@ -1551,6 +1554,7 @@ function parseDeciderOutput(text: string, line: number): ParsedDeciderOutput {
   const inputMatch = /^(.+?)\s*=\s*input(?:\s+(R|G|RG))?$/i.exec(text);
   if (inputMatch) {
     return {
+      line,
       signal: parseSignalToken(inputMatch[1], line),
       value: {
         kind: 'input',
@@ -1562,6 +1566,7 @@ function parseDeciderOutput(text: string, line: number): ParsedDeciderOutput {
   const constantMatch = /^(.+?)\s*=\s*(-?\d+)$/.exec(text);
   if (constantMatch) {
     return {
+      line,
       signal: parseSignalToken(constantMatch[1], line),
       value: {
         kind: 'constant',
@@ -1657,6 +1662,26 @@ function parseWireSelector(selector: string | undefined): { red?: boolean; green
     return { red: false, green: true };
   }
   throw new Error(`Unsupported wire selector '${selector}'.`);
+}
+
+function validateDeciderWildcardOutputs(combinator: ParsedCombinator): void {
+  if (combinator.kind !== 'decider' || combinator.deciderConditions.length === 0) {
+    return;
+  }
+
+  const firstConditionFirstSignalName = combinator.deciderConditions[0]?.first.signal.name;
+  if (firstConditionFirstSignalName !== 'signal-each') {
+    return;
+  }
+
+  for (const output of combinator.deciderOutputs) {
+    const outputSignalName = output.signal.name;
+    if (outputSignalName === 'signal-everything' || outputSignalName === 'signal-every') {
+      throw new Error(
+        `Line ${output.line}: decider with first condition signal 'each' cannot use 'every'/'everything' output wildcard; use 'each' or 'any'.`
+      );
+    }
+  }
 }
 
 function parseSignalToken(token: string, line: number): SignalID {

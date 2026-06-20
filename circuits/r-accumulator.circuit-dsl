@@ -1,0 +1,117 @@
+// Function:
+// Accumulates the per-signal running maximum from input and clears to zero while reset is high.
+// Channels:
+// IN (input): red source values to accumulate by per-signal max.
+// RESET (input): red control where non-zero R clears accumulation and blocks updates.
+// OUT (output): red accumulated per-signal maxima since last reset.
+circuit: r-accumulator
+
+combinators:
+  IN: io medium-electric-pole
+  RESET: io medium-electric-pole
+  OUT: io medium-electric-pole
+
+  OUT_CLEAN: arithmetic
+    each G + 0 -> each
+
+  CAPTURE_MAX: decider
+    conditions:
+      each R > each G
+      AND "R" R = 0
+    outputs:
+      each = input R
+
+  HOLD_MAX: decider
+    conditions:
+      each G >= each R
+      AND "R" R = 0
+    outputs:
+      each = input G
+
+wires:
+  network Input: red
+    IN -> CAPTURE_MAX in
+    IN -> HOLD_MAX in
+    RESET -> CAPTURE_MAX in
+    RESET -> HOLD_MAX in
+
+  network State: green
+    CAPTURE_MAX out -> CAPTURE_MAX in
+    CAPTURE_MAX out -> HOLD_MAX in
+    HOLD_MAX out -> CAPTURE_MAX in
+    HOLD_MAX out -> HOLD_MAX in
+    CAPTURE_MAX out -> OUT_CLEAN in
+    HOLD_MAX out -> OUT_CLEAN in
+
+  network PublicOut: red
+    OUT_CLEAN out -> OUT
+
+tests:
+  no-input-produces-zero:
+    tick 3:
+      assert signal "A" = 0 on pin OUT red
+      assert signal "B" = 0 on pin OUT red
+
+  accumulates-running-max-per-signal:
+    tick 0:
+      apply signal "A" = 3 to pin IN red continuously
+    tick 2:
+      assert signal "A" = 3 on pin OUT red
+    tick 3:
+      apply signal "A" = 5 to pin IN red continuously
+    tick 5:
+      assert signal "A" = 5 on pin OUT red
+    tick 6:
+      apply signal "A" = 4 to pin IN red continuously
+    tick 8:
+      assert signal "A" = 5 on pin OUT red
+
+  tracks-multiple-signals-independently:
+    tick 0:
+      apply signal "A" = 2 to pin IN red continuously
+      apply signal "B" = 9 to pin IN red continuously
+    tick 2:
+      assert signal "A" = 2 on pin OUT red
+      assert signal "B" = 9 on pin OUT red
+    tick 3:
+      apply signal "A" = 7 to pin IN red continuously
+      apply signal "B" = 4 to pin IN red continuously
+    tick 5:
+      assert signal "A" = 7 on pin OUT red
+      assert signal "B" = 9 on pin OUT red
+
+  reset-high-clears-and-blocks-updates:
+    tick 0:
+      apply signal "A" = 6 to pin IN red continuously
+    tick 2:
+      assert signal "A" = 6 on pin OUT red
+      apply signal "R" = 1 to pin RESET red continuously
+      apply signal "A" = 10 to pin IN red continuously
+    tick 4:
+      assert signal "A" = 0 on pin OUT red
+      assert signal "R" = 0 on pin OUT red
+    tick 6:
+      assert signal "A" = 0 on pin OUT red
+      assert signal "R" = 0 on pin OUT red
+
+  accumulation-restarts-after-reset-release:
+    tick 0:
+      apply signal "A" = 6 to pin IN red continuously
+    tick 2:
+      apply signal "R" = 1 to pin RESET red continuously
+    tick 4:
+      assert signal "A" = 0 on pin OUT red
+      apply signal "R" = 0 to pin RESET red continuously
+      apply signal "A" = 4 to pin IN red continuously
+    tick 7:
+      assert signal "A" = 4 on pin OUT red
+
+  output-pollution-does-not-corrupt-state:
+    tick 0:
+      apply signal "A" = 5 to pin IN red continuously
+    tick 2:
+      assert signal "A" = 5 on pin OUT red
+      apply signal "X" = 99 to pin OUT red continuously
+    tick 4:
+      assert signal "A" = 5 on network State
+      assert signal "X" = 0 on network State

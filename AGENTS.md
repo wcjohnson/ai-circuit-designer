@@ -28,3 +28,7 @@ Core simulation assumptions:
 - Keep CLI output stable and JSON-friendly so examples can become regression tests.
 - Prefer small fixture blueprints in `examples/` and focused tests in `test/`.
 - Do not add Factorio-specific behavior by guessing silently. When the blueprint schema is ambiguous, document the supported shape and add tests for it.
+
+## Agent Requirements
+
+- For any task that designs or modifies circuit DSL (new circuits, behavior changes, or circuit-level fixes), agents must use the `factorio-dsl-circuit-designer` skill as part of their workflow.

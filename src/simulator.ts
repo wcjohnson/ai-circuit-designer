@@ -666,6 +666,7 @@ function evaluateEachDecider(
   outputs: DeciderOutputSpec[]
 ): SignalBag {
   const result: SignalBag = new Map();
+  const emittedAnythingOutputs = new Set<number>();
   const signalNames = new Set<SignalName>();
   for (const condition of conditions) {
     for (const signal of selectCircuitNetworks(inputs, condition.first_signal_networks).keys()) {
@@ -679,10 +680,25 @@ function evaluateEachDecider(
     if (!evaluateDeciderConditions(conditions, inputs, signal)) {
       continue;
     }
-    for (const output of outputs) {
+    for (const [outputIndex, output] of outputs.entries()) {
       const outputSignal = signalName(output.signal) ?? 'signal-each';
+
+      // In each-mode deciders, `everything` output is illegal in Factorio; ignore it.
+      if (isEverythingOutputSignal(outputSignal)) {
+        continue;
+      }
+
+      // In each-mode deciders, `anything` emits once for the first matching signal only.
+      if (isAnythingOutputSignal(outputSignal) && emittedAnythingOutputs.has(outputIndex)) {
+        continue;
+      }
+
       const value = output.copy_count_from_input === false ? output.constant ?? 1 : getSignal(selectCircuitNetworks(inputs, output.networks), signal);
-      addSignal(result, isEachLikeOutputSignal(outputSignal) ? signal : outputSignal, value);
+      if (isAnythingOutputSignal(outputSignal)) {
+        emittedAnythingOutputs.add(outputIndex);
+      }
+
+      addSignal(result, isEachOutputSignal(outputSignal) || isAnythingOutputSignal(outputSignal) ? signal : outputSignal, value);
     }
   }
   return result;
@@ -732,8 +748,8 @@ function isEverythingOutputSignal(signal: string): boolean {
   return signal === 'signal-everything' || signal === 'signal-every';
 }
 
-function isEachLikeOutputSignal(signal: string): boolean {
-  return isEachOutputSignal(signal) || isEverythingOutputSignal(signal);
+function isAnythingOutputSignal(signal: string): boolean {
+  return signal === 'signal-anything' || signal === 'signal-any';
 }
 
 function evaluateSelector(entity: BlueprintEntity, input: ReadonlySignalBag): SignalBag {

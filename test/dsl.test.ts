@@ -248,6 +248,22 @@ combinators:
   );
 });
 
+test('compileDsl rejects decider each-LHS with every/everything wildcard output', () => {
+  const source = `
+combinators:
+  D1: decider
+    conditions:
+      each R > 0
+    outputs:
+      every = input R
+`;
+
+  assert.throws(
+    () => compileDsl(source),
+    /cannot use 'every'\/'everything' output wildcard/
+  );
+});
+
 test('compileDsl inlines imported subcircuit endpoints', () => {
   const dir = mkdtempSync(join(tmpdir(), 'dsl-subcircuit-'));
   try {

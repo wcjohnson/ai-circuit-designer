@@ -44,6 +44,67 @@ test('arithmetic combinator outputs on the tick after reading input', async () =
   assert.deepEqual(signalsOn(result, 1, 'green', 2, 2), { 'signal-B': 6 });
 });
 
+test('arithmetic combinator collapses each-input results into one output by summing per-signal results', () => {
+  const result = simulateBlueprint({
+    item: 'blueprint',
+    entities: [
+      {
+        entity_number: 1,
+        name: 'arithmetic-combinator',
+        position: { x: 0, y: 0 },
+        control_behavior: {
+          arithmetic_conditions: {
+            first_signal: { type: 'virtual', name: 'signal-each' },
+            operation: '+',
+            second_constant: 1,
+            output_signal: { type: 'virtual', name: 'signal-Z' }
+          }
+        }
+      }
+    ]
+  }, {
+    ticks: 2,
+    inputs: [
+      { entityId: 1, connectorId: 1, wire: 'red', signals: { 'signal-A': 2, 'signal-B': 5 } }
+    ]
+  });
+
+  // (2 + 1) + (5 + 1) = 9
+  assert.deepEqual(signalsOn(result, 1, 'red', 1, 2), { 'signal-Z': 9 });
+});
+
+test('arithmetic combinator sums collapsed each-results across the union of selected operand keys', () => {
+  const result = simulateBlueprint({
+    item: 'blueprint',
+    entities: [
+      {
+        entity_number: 1,
+        name: 'arithmetic-combinator',
+        position: { x: 0, y: 0 },
+        control_behavior: {
+          arithmetic_conditions: {
+            first_signal: { type: 'virtual', name: 'signal-each' },
+            first_signal_networks: { red: true, green: false },
+            operation: '-',
+            second_signal: { type: 'virtual', name: 'signal-each' },
+            second_signal_networks: { red: false, green: true },
+            output_signal: { type: 'virtual', name: 'signal-Z' }
+          }
+        }
+      }
+    ]
+  }, {
+    ticks: 2,
+    inputs: [
+      { entityId: 1, connectorId: 1, wire: 'red', signals: { 'signal-A': 10, 'signal-B': 4, 'signal-C': 1 } },
+      { entityId: 1, connectorId: 1, wire: 'green', signals: { 'signal-A': 1, 'signal-B': 8 } }
+    ]
+  });
+
+  // Union keys are A, B, C: (10-1) + (4-8) + (1-0) = 6
+  assert.deepEqual(signalsOn(result, 1, 'red', 1, 2), { 'signal-Z': 6 });
+});
+
 test('int32 overflow wraps INT_MAX + 1 to INT_MIN', () => {
   const result = simulateBlueprint({
     item: 'blueprint',
@@ -333,6 +394,82 @@ test('decider non-each condition allows every output pass-through', () => {
   });
 
   assert.deepEqual(signalsOn(result, 1, 'red', 1, 2), { 'signal-A': 5, 'signal-B': 2 });
+});
+
+test('decider each-mode with anything output emits first matching signal only', () => {
+  const result = simulateBlueprint({
+    item: 'blueprint',
+    entities: [
+      {
+        entity_number: 1,
+        name: 'decider-combinator',
+        position: { x: 0, y: 0 },
+        control_behavior: {
+          decider_conditions: {
+            conditions: [
+              {
+                first_signal: { type: 'virtual', name: 'signal-each' },
+                comparator: '>',
+                constant: 0
+              }
+            ],
+            outputs: [
+              {
+                signal: { type: 'virtual', name: 'signal-anything' },
+                copy_count_from_input: true,
+                networks: { red: true, green: false }
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }, {
+    ticks: 2,
+    inputs: [
+      { entityId: 1, connectorId: 1, wire: 'red', signals: { 'signal-A': 5, 'signal-B': 2 } }
+    ]
+  });
+
+  assert.deepEqual(signalsOn(result, 1, 'red', 1, 2), { 'signal-A': 5 });
+});
+
+test('decider each-mode with everything output emits nothing', () => {
+  const result = simulateBlueprint({
+    item: 'blueprint',
+    entities: [
+      {
+        entity_number: 1,
+        name: 'decider-combinator',
+        position: { x: 0, y: 0 },
+        control_behavior: {
+          decider_conditions: {
+            conditions: [
+              {
+                first_signal: { type: 'virtual', name: 'signal-each' },
+                comparator: '>',
+                constant: 0
+              }
+            ],
+            outputs: [
+              {
+                signal: { type: 'virtual', name: 'signal-everything' },
+                copy_count_from_input: true,
+                networks: { red: true, green: false }
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }, {
+    ticks: 2,
+    inputs: [
+      { entityId: 1, connectorId: 1, wire: 'red', signals: { 'signal-A': 5, 'signal-B': 2 } }
+    ]
+  });
+
+  assert.deepEqual(signalsOn(result, 1, 'red', 1, 2), {});
 });
 
 test('selector combinator select-signal emits the selected signal', async () => {

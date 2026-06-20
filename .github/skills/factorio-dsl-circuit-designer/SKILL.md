@@ -160,3 +160,53 @@ A result is complete only if all are true:
 - Tests cover core behavior, timing behavior, and at least one non-trivial edge case.
 - Signal names/types are consistent end-to-end.
 - Combinator count is minimal for the requested behavior.
+
+## Semantics Notes
+
+Use these verified simulator semantics to avoid re-researching common behavior:
+
+- Tick model:
+  - Constants publish on tick N.
+  - Arithmetic, decider, and selector read tick N inputs and publish on tick N+1.
+  - Combinator outputs are broadcast identically to both red and green output connectors.
+
+- Constant combinator:
+  - Emits its configured non-zero signals every tick while enabled.
+  - Behaves as a source only; no input-side logic.
+
+- Arithmetic combinator:
+  - Computes one expression from selected input networks (R, G, or both).
+  - Uses per-signal iteration when either operand uses each or output is each; iteration key set is the union of operand signal keys.
+  - When output is a single signal (not each) but evaluation is in each mode, it applies the operation per signal and sums those per-signal results into the one output signal.
+  - Otherwise computes one scalar result for one output signal.
+
+- Decider combinator:
+  - If the first condition operand is each, decider runs in each mode (per-signal evaluation).
+  - In each mode, conditions run over the union of first/second selected-network signal keys; mixed non-each conditions act as per-iteration gates.
+  - In non-each mode, condition is evaluated once (global pass/fail).
+  - In each mode: wildcard output everything/every is illegal; wildcard outputs are each (emit per matching signal) or anything/any (emit once for first matching signal).
+  - In non-each mode, the use of "every = input" will forward all signals from selected networks.
+  - If non-each mode, the "each" wildcard is illegal on the RHS.
+
+- Special signal modes (applies to arithmetic/decider expressions):
+  - each: per-signal mode.
+  - any or anything: condition passes if at least one signal satisfies comparator.
+  - every or everything: condition passes only if all present signals satisfy comparator, and fails on empty input.
+  - all concept in this DSL maps to every/everything semantics.
+
+- Integer math and overflow:
+  - Signal values are int32; network merges and arithmetic are int32-wrapped.
+  - +, -, * use 32-bit wraparound.
+  - / and % return 0 on divide-by-zero; division truncates toward zero.
+  - ^ returns 0 for negative exponent; exponent is capped to 31.
+  - Bit shifts mask shift amount with 31; bitwise ops are 32-bit signed.
+
+- Selector combinator modes:
+  - select: sorts non-zero candidate signals by value (descending when select_max=true, ascending when false), excludes index signal from candidates, and emits exactly one selected signal by zero-based index.
+  - count: outputs configured count_signal with the number of non-zero input signals.
+  - quality-filter: passes through signals matching quality_filter condition (or passes all if filter is unset).
+  - quality-transfer: chooses a quality (from source signal or static source) and emits destination signal tagged with that quality; value is summed from matching source name+quality (or 1 when no source signal is configured).
+  - Unsupported selector operations compile but simulator emits no output for them.
+
+- Output pollution hardening:
+  - If internal state is directly exposed on public output wires, add an identity buffer (each + 0 -> each) before OUT and keep pollution tests.

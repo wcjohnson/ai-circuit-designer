@@ -1,0 +1,94 @@
+// Function:
+// Emits a one-tick pulse when the input signal set changes compared to the prior tick.
+// Channels:
+// IN (input): red held signal snapshot to monitor for changes.
+// OUT (output): red pulse output where P=1 for exactly one tick after a detected change.
+circuit: pulse-on-change
+
+combinators:
+  IN: io medium-electric-pole
+  OUT: io medium-electric-pole
+
+  PREV: arithmetic
+    each R + 0 -> each
+
+  DELTA: arithmetic
+    each R - each G -> each
+
+  CHANGED: decider
+    conditions:
+      anything R != 0
+    outputs:
+      "P" = 1
+
+wires:
+  network InputNow: red
+    IN -> PREV in
+    IN -> DELTA in
+
+  network PrevState: green
+    PREV out -> DELTA in
+
+  network DeltaDetect: red
+    DELTA out -> CHANGED in
+
+  network PulseOut: red
+    CHANGED out -> OUT
+
+tests:
+  idle-has-no-pulse:
+    tick 5:
+      assert signal "P" = 0 on pin OUT red
+
+  rising-input-emits-single-pulse:
+    tick 0:
+      apply signal "A" = 7 to pin IN red continuously
+    tick 1:
+      assert signal "P" = 0 on pin OUT red
+    tick 2:
+      assert signal "P" = 1 on pin OUT red
+    tick 3:
+      assert signal "P" = 0 on pin OUT red
+    tick 8:
+      assert signal "P" = 0 on pin OUT red
+
+  changed-value-emits-single-pulse:
+    tick 0:
+      apply signal "A" = 3 to pin IN red continuously
+    tick 2:
+      assert signal "P" = 1 on pin OUT red
+    tick 3:
+      assert signal "P" = 0 on pin OUT red
+    tick 5:
+      apply signal "A" = 9 to pin IN red continuously
+    tick 6:
+      assert signal "P" = 0 on pin OUT red
+    tick 7:
+      assert signal "P" = 1 on pin OUT red
+    tick 8:
+      assert signal "P" = 0 on pin OUT red
+
+  removed-signal-emits-single-pulse:
+    tick 0:
+      apply signal "A" = 4 to pin IN red continuously
+      apply signal "B" = 2 to pin IN red continuously
+    tick 4:
+      apply signal "B" = 0 to pin IN red continuously
+    tick 5:
+      assert signal "P" = 0 on pin OUT red
+    tick 6:
+      assert signal "P" = 1 on pin OUT red
+    tick 7:
+      assert signal "P" = 0 on pin OUT red
+
+  output-pollution-does-not-corrupt-state:
+    tick 0:
+      apply signal "X" = 99 to pin OUT red continuously
+    tick 4:
+      assert signal "X" = 0 on network PrevState
+    tick 5:
+      apply signal "A" = 6 to pin IN red continuously
+    tick 7:
+      assert signal "P" = 1 on pin OUT red
+      assert signal "A" = 6 on network PrevState
+      assert signal "X" = 0 on network PrevState
