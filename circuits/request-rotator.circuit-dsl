@@ -14,10 +14,17 @@ combinators:
   COUNT_REQ: selector
     operation: count
     count_signal: C
-
-  INDEX_NEXT: arithmetic
-    "I" R + "D" R -> "I"
-  INDEX_WRAP: arithmetic
+  STEP_PREV: arithmetic
+    "D" R + 0 -> "P"
+  STEP_EDGE: decider
+    conditions:
+      "D" R != 0
+      AND "P" R = 0
+    outputs:
+      "E" = 1
+  INDEX_ACC: arithmetic
+    "I" R + "E" R -> "I"
+  INDEX_NORM: arithmetic
     "I" R % "C" G -> "I"
 
   SELECT_REQ: selector
@@ -31,17 +38,22 @@ wires:
     REQ -> SELECT_REQ in
 
   network StepBus: red
-    STEP -> INDEX_NEXT in
+    STEP -> STEP_EDGE in
+    STEP -> STEP_PREV in
+
+  network StepPrev: red
+    STEP_PREV out -> STEP_EDGE in
+
+  network StepPulse: red
+    STEP_EDGE out -> INDEX_ACC in
 
   network IndexState: red
-    INDEX_WRAP out -> INDEX_NEXT in
-  network IndexRaw: red
-    INDEX_NEXT out -> INDEX_WRAP in
+    INDEX_ACC out -> INDEX_ACC in
+    INDEX_ACC out -> INDEX_NORM in
   network IndexToSelect: green
-    INDEX_WRAP out -> SELECT_REQ in
-    INDEX_NEXT out -> SELECT_REQ in
+    INDEX_NORM out -> SELECT_REQ in
   network ReqCount: green
-    COUNT_REQ out -> INDEX_WRAP in
+    COUNT_REQ out -> INDEX_NORM in
 
   network SelectedOut: red
     SELECT_REQ out -> SELECTED
@@ -68,7 +80,7 @@ tests:
       assert signal "A" = 12 on pin SELECTED red
     tick 7:
       apply signal "D" = 1 to pin STEP red
-    tick 10:
+    tick 12:
       assert signal "B" = 8 on pin SELECTED red
 
   step-pulse-does-not-flicker-index:
@@ -77,13 +89,13 @@ tests:
       apply signal "B" = 8 to pin REQ red continuously
     tick 7:
       apply signal "D" = 1 to pin STEP red
-    tick 10:
-      assert signal "I" = 1 on network IndexToSelect
-      assert signal "B" = 8 on pin SELECTED red
-    tick 11:
-      assert signal "I" = 1 on network IndexToSelect
-      assert signal "B" = 8 on pin SELECTED red
     tick 12:
+      assert signal "I" = 1 on network IndexToSelect
+      assert signal "B" = 8 on pin SELECTED red
+    tick 13:
+      assert signal "I" = 1 on network IndexToSelect
+      assert signal "B" = 8 on pin SELECTED red
+    tick 14:
       assert signal "I" = 1 on network IndexToSelect
       assert signal "B" = 8 on pin SELECTED red
 
@@ -93,11 +105,11 @@ tests:
       apply signal "B" = 8 to pin REQ red continuously
     tick 7:
       apply signal "D" = 1 to pin STEP red
-    tick 10:
+    tick 12:
       assert signal "B" = 8 on pin SELECTED red
     tick 20:
       apply signal "D" = 1 to pin STEP red
-    tick 24:
+    tick 27:
       assert signal "A" = 12 on pin SELECTED red
       assert signal "B" = 0 on pin SELECTED red
 

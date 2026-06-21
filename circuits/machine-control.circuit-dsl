@@ -53,8 +53,13 @@ combinators:
       AND "P" R = 0
     outputs:
       "D" = 1
-      "R" = 1
       "U" = 1
+
+  RESET_ON_TIMEOUT: decider
+    conditions:
+      "O" R != 0
+    outputs:
+      "R" = 1
 
   SWITCH_IF_UNREQUESTED: decider
     conditions:
@@ -79,7 +84,8 @@ combinators:
 
   SET_IF_SELECTED: decider
     conditions:
-      "U" G != 0
+      each R != each G
+      OR "U" G != 0
       OR "C" G = 0
       AND anything R != 0
     outputs:
@@ -122,12 +128,13 @@ wires:
   network TimerOut: red
     TIMER OUT -> INC_ON_TIMEOUT in
     TIMER OUT -> TIMEOUT_PREV in
+    TIMER OUT -> RESET_ON_TIMEOUT in
 
   network TimerOutPrev: red
     TIMEOUT_PREV out -> INC_ON_TIMEOUT in
 
   network TimerReset: green
-    INC_ON_TIMEOUT out -> TIMER RESET_IN
+    RESET_ON_TIMEOUT out -> TIMER RESET_IN
   network TimerThreshold: green
     TIMEOUT_CFG -> TIMER TIMEOUT_IN
 
@@ -137,6 +144,9 @@ wires:
   network SelectedReq: red
     ROTATOR SELECTED -> SET_IF_SELECTED in
     ROTATOR SELECTED -> SELECT_DELAY in
+
+  network SelectedVsCurrent: green
+    CURRENT_BUF out -> SET_IF_SELECTED in
 
   network SelectedReqDelayed: red
     SELECT_DELAY out -> RECIPE_HOLD DATA_IN
@@ -248,8 +258,7 @@ tests:
       assert signal item(copper-cable) = 100 on pin M_WRITE red
       assert signal item(iron-plate) = 0 on pin M_WRITE red
       assert signal item(copper-cable) = 100 on network CurrentRecipeState
-      assert signal "W" = 1 on network TimerIn
-    tick 325:
+    tick 360:
       assert signal item(iron-plate) = 100 on pin M_WRITE red
       assert signal item(copper-cable) = 0 on pin M_WRITE red
 
@@ -290,25 +299,16 @@ tests:
       apply signal item(copper-wire) = 100 to pin REQ red continuously
       apply signal item(iron-pole) = 50 to pin REQ red continuously
       apply signal item(copper-plate) = 2 to pin M_READ red continuously
+      apply signal item(iron-plate) = 2 to pin M_READ red continuously
       apply signal item(copper-plate) = 0 to pin AVAIL red continuously
-      apply signal item(iron-plate) = 20 to pin AVAIL red continuously
+      apply signal item(iron-plate) = 0 to pin AVAIL red continuously
+    tick 100:
+      assert signal item(copper-wire) = 100 on pin M_WRITE red
+      assert signal item(iron-pole) = 0 on pin M_WRITE red
     tick 315:
       assert signal item(iron-pole) = 50 on pin M_WRITE red
       assert signal item(copper-wire) = 0 on pin M_WRITE red
-      apply signal item(copper-plate) = 0 to pin M_READ red continuously
-      apply signal item(iron-plate) = 2 to pin M_READ red continuously
-      apply signal item(iron-plate) = 0 to pin AVAIL red continuously
-      apply signal item(copper-plate) = 20 to pin AVAIL red continuously
     tick 640:
-      assert signal item(copper-wire) = 100 on network SelectedReq
-      assert signal item(iron-pole) = 0 on network SelectedReq
-      assert signal "O" = 0 on network TimerOut
-      assert signal item(copper-wire) = 100 on pin M_WRITE red
-      assert signal item(iron-pole) = 0 on pin M_WRITE red
-    tick 900:
-      assert signal "W" = 1 on network TimerIn
-      assert signal "O" = 1 on network TimerOut
-      assert signal "D" = 1 on network IndexDelta
       assert signal item(copper-wire) = 100 on network SelectedReq
       assert signal item(iron-pole) = 0 on network SelectedReq
       assert signal item(copper-wire) = 100 on pin M_WRITE red

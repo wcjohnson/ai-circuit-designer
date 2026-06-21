@@ -477,9 +477,22 @@ combinators:
 ${arithmeticLines}
 `;
 
-  assert.throws(
-    () => compileDsl(source),
-    /Warning: circuit cannot fit into a 9x9 blueprint grid/
-  );
+  const warnings: string[] = [];
+  const originalWarn = console.warn;
+  let compiled: ReturnType<typeof compileDsl> | undefined;
+
+  console.warn = (message?: unknown, ...rest: unknown[]) => {
+    warnings.push([message, ...rest].map((part) => String(part)).join(' '));
+  };
+
+  try {
+    compiled = compileDsl(source);
+  } finally {
+    console.warn = originalWarn;
+  }
+
+  assert.ok(compiled);
+  assert.ok(warnings.some((warning) => /Warning: circuit cannot fit into a 9x9 blueprint grid/.test(warning)));
+  assert.ok(compiled.blueprint.entities.some((entity) => entity.position.y > 8.5));
 });
 

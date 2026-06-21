@@ -998,6 +998,8 @@ function computeBlueprintLayout(
   }
 
   const positions = new Map<string, { x: number; y: number }>();
+  let overflowTopRow = GRID_SIZE + 1;
+  let didWarnOverflow = false;
 
   const place = (combinator: ParsedCombinator, columns: number[]): void => {
     const height = combinator.kind === 'constant' || combinator.kind === 'pole' || combinator.kind === 'io' ? 1 : 2;
@@ -1027,7 +1029,18 @@ function computeBlueprintLayout(
       }
     }
 
-    throw new Error(`Warning: circuit cannot fit into a 9x9 blueprint grid (failed placing '${combinator.id}').`);
+    if (!didWarnOverflow) {
+      didWarnOverflow = true;
+      console.warn(`Warning: circuit cannot fit into a 9x9 blueprint grid (failed placing '${combinator.id}'). Overflow entities will spill down the Y-axis.`);
+    }
+
+    const overflowRow = overflowTopRow;
+    overflowTopRow += height;
+    const overflowColumn = columns[0] ?? 2;
+    positions.set(combinator.id, {
+      x: overflowColumn - 0.5,
+      y: height === 1 ? overflowRow - 0.5 : overflowRow
+    });
   };
 
   for (const combinator of combinators) {
