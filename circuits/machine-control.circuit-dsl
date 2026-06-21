@@ -243,7 +243,7 @@ tests:
       assert signal "A" = 12 on pin M_WRITE red
     tick 315:
       assert signal "B" = 8 on pin M_WRITE red
-    tick 330:
+    tick 180:
       assert signal "B" = 8 on pin M_WRITE red
 
   zero-readback-still-timeouts-and-rotates-request:
@@ -258,7 +258,7 @@ tests:
       assert signal item(copper-cable) = 100 on pin M_WRITE red
       assert signal item(iron-plate) = 0 on pin M_WRITE red
       assert signal item(copper-cable) = 100 on network CurrentRecipeState
-    tick 360:
+    tick 205:
       assert signal item(iron-plate) = 100 on pin M_WRITE red
       assert signal item(copper-cable) = 0 on pin M_WRITE red
 
@@ -290,7 +290,7 @@ tests:
       assert signal item(iron-pole) = 50 on pin M_WRITE red
       apply signal item(copper-plate) = 0 to pin M_READ red continuously
       apply signal item(iron-plate) = 2 to pin M_READ red continuously
-    tick 340:
+    tick 185:
       assert signal item(iron-pole) = 50 on pin M_WRITE red
       assert signal item(copper-wire) = 0 on pin M_WRITE red
 
@@ -308,7 +308,7 @@ tests:
     tick 315:
       assert signal item(iron-pole) = 50 on pin M_WRITE red
       assert signal item(copper-wire) = 0 on pin M_WRITE red
-    tick 640:
+    tick 340:
       assert signal item(copper-wire) = 100 on network SelectedReq
       assert signal item(iron-pole) = 0 on network SelectedReq
       assert signal item(copper-wire) = 100 on pin M_WRITE red
