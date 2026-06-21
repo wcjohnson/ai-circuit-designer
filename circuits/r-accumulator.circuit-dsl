@@ -3,7 +3,7 @@
 // Channels:
 // IN (input): red source values to accumulate by per-signal max.
 // RESET (input): red control where non-zero R clears accumulation and blocks updates.
-// OUT (output): red accumulated per-signal maxima since last reset.
+// OUT (output): red accumulated per-signal maxima since last reset (measured minimum latencies: IN update->OUT 2 ticks, RESET high clear->OUT 2 ticks, RESET release with present input->OUT 2 ticks).
 circuit: r-accumulator
 
 combinators:
@@ -48,70 +48,61 @@ wires:
 
 tests:
   no-input-produces-zero:
-    tick 3:
-      assert signal "A" = 0 on pin OUT red
-      assert signal "B" = 0 on pin OUT red
+    tick 0:
+      assert window [+0, +20]: always nothing on pin OUT red
 
   accumulates-running-max-per-signal:
     tick 0:
       apply signal "A" = 3 to pin IN red continuously
-    tick 2:
-      assert signal "A" = 3 on pin OUT red
+      assert window [+0, +1]: always nothing on pin OUT red
+      assert at +2: always exactly("A" = 3) on pin OUT red
     tick 3:
       apply signal "A" = 5 to pin IN red continuously
-    tick 5:
-      assert signal "A" = 5 on pin OUT red
+      assert window [+0, +1]: always exactly("A" = 3) on pin OUT red
+      assert window [+2, +5]: always exactly("A" = 5) on pin OUT red
     tick 6:
       apply signal "A" = 4 to pin IN red continuously
-    tick 8:
-      assert signal "A" = 5 on pin OUT red
+      assert window [+0, +8]: always exactly("A" = 5) on pin OUT red
 
   tracks-multiple-signals-independently:
     tick 0:
       apply signal "A" = 2 to pin IN red continuously
       apply signal "B" = 9 to pin IN red continuously
-    tick 2:
-      assert signal "A" = 2 on pin OUT red
-      assert signal "B" = 9 on pin OUT red
+      assert window [+0, +1]: always nothing on pin OUT red
+      assert at +2: always exactly("A" = 2, "B" = 9) on pin OUT red
     tick 3:
       apply signal "A" = 7 to pin IN red continuously
       apply signal "B" = 4 to pin IN red continuously
-    tick 5:
-      assert signal "A" = 7 on pin OUT red
-      assert signal "B" = 9 on pin OUT red
+      assert window [+0, +1]: always exactly("A" = 2, "B" = 9) on pin OUT red
+      assert window [+2, +8]: always exactly("A" = 7, "B" = 9) on pin OUT red
 
   reset-high-clears-and-blocks-updates:
     tick 0:
       apply signal "A" = 6 to pin IN red continuously
+      assert at +2: always exactly("A" = 6) on pin OUT red
     tick 2:
-      assert signal "A" = 6 on pin OUT red
       apply signal "R" = 1 to pin RESET red continuously
       apply signal "A" = 10 to pin IN red continuously
-    tick 4:
-      assert signal "A" = 0 on pin OUT red
-      assert signal "R" = 0 on pin OUT red
-    tick 6:
-      assert signal "A" = 0 on pin OUT red
-      assert signal "R" = 0 on pin OUT red
+      assert window [+0, +1]: always exactly("A" = 6) on pin OUT red
+      assert window [+2, +12]: always nothing on pin OUT red
 
   accumulation-restarts-after-reset-release:
     tick 0:
       apply signal "A" = 6 to pin IN red continuously
     tick 2:
       apply signal "R" = 1 to pin RESET red continuously
+      assert window [+2, +2]: always nothing on pin OUT red
     tick 4:
-      assert signal "A" = 0 on pin OUT red
       apply signal "R" = 0 to pin RESET red continuously
       apply signal "A" = 4 to pin IN red continuously
-    tick 7:
-      assert signal "A" = 4 on pin OUT red
+      assert window [+0, +1]: always nothing on pin OUT red
+      assert window [+2, +10]: always exactly("A" = 4) on pin OUT red
 
   output-pollution-does-not-corrupt-state:
     tick 0:
       apply signal "A" = 5 to pin IN red continuously
-    tick 2:
-      assert signal "A" = 5 on pin OUT red
+      assert window [+2, +2]: always exactly("A" = 5) on pin OUT red
+    tick 3:
       apply signal "X" = 99 to pin OUT red continuously
-    tick 4:
-      assert signal "A" = 5 on network State
-      assert signal "X" = 0 on network State
+      assert window [+0, +10]: always exactly("A" = 5) on network State
+      assert window [+0, +10]: always "X" = 0 on network State

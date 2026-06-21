@@ -2,7 +2,7 @@
 // Latches any non-zero input value and holds it when input is zero.
 // Channels:
 // IN (input): red value bus where any non-zero snapshot is latched.
-// OUT (output): public red latched value.
+// OUT (output): public red latched value (measured minimum IN->OUT set/re-latch latency: 3 ticks).
 circuit: latch
 
 combinators:
@@ -58,42 +58,48 @@ wires:
 
 tests:
   no-input-no-output:
-    tick 3:
-      assert signal "A" = 0 on pin OUT red
-      assert signal "B" = 0 on pin OUT red
+    tick 0:
+      assert window [+0, +20]: always nothing on pin OUT red
 
   nonzero-input-latches:
     tick 0:
       apply signal "A" = 5 to pin IN red continuously
-    tick 2:
-      assert signal "A" = 5 on network Input
-    tick 4:
-      assert signal "A" = 5 on pin OUT red
+      assert window [+0, +2]: always nothing on pin OUT red
+      assert window [+3, +12]: always exactly("A" = 5) on pin OUT red
 
   zero-input-holds-previous-value:
     tick 0:
       apply signal "A" = 5 to pin IN red continuously
+      assert window [+3, +3]: always exactly("A" = 5) on pin OUT red
     tick 3:
       apply signal "A" = 0 to pin IN red continuously
-    tick 6:
-      assert signal "A" = 5 on pin OUT red
+      assert window [+0, +12]: always exactly("A" = 5) on pin OUT red
+
+  zero-input-holds-multi-signal-snapshot:
+    tick 0:
+      apply signal "A" = 5 to pin IN red continuously
+      apply signal "B" = 2 to pin IN red continuously
+      assert window [+3, +3]: always exactly("A" = 5, "B" = 2) on pin OUT red
+    tick 3:
+      apply signal "A" = 0 to pin IN red continuously
+      apply signal "B" = 0 to pin IN red continuously
+      assert window [+0, +12]: always exactly("A" = 5, "B" = 2) on pin OUT red
 
   nonzero-change-relatches-to-new-input:
     tick 0:
       apply signal "A" = 5 to pin IN red continuously
+      assert window [+3, +3]: always exactly("A" = 5) on pin OUT red
     tick 4:
       apply signal "A" = 0 to pin IN red continuously
       apply signal "B" = 9 to pin IN red continuously
-    tick 8:
-      assert signal "A" = 0 on pin OUT red
-      assert signal "B" = 9 on pin OUT red
+      assert window [+0, +2]: always exactly("A" = 5) on pin OUT red
+      assert window [+3, +12]: always exactly("B" = 9) on pin OUT red
 
   output-pollution-does-not-corrupt-state:
     tick 0:
       apply signal "A" = 7 to pin IN red continuously
+      assert window [+3, +3]: always exactly("A" = 7) on pin OUT red
     tick 4:
-      assert signal "A" = 7 on pin OUT red
       apply signal "X" = 99 to pin OUT red
-    tick 6:
-      assert signal "A" = 7 on pin OUT red
-      assert signal "X" = 0 on pin OUT red
+      assert window [+0, +10]: always exactly("A" = 7) on network State
+      assert window [+1, +10]: always exactly("A" = 7) on pin OUT red

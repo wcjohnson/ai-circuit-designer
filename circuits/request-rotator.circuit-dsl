@@ -1,8 +1,8 @@
 // Function:
 // Maintains a round-robin index over requested recipes and outputs the current selected recipe.
 // Channels:
-// REQ (input, latency: 1 tick to SELECTED): red requested recipes by signal and count.
-// STEP (input, latency: 4 ticks pulse-to-effect on SELECTED): red pulse on D to advance round-robin index.
+// REQ (input, measured minimum latencies: 1 tick to initial SELECTED, 3 ticks for request-removal renormalization): red requested recipes by signal and count.
+// STEP (input, measured minimum latency: 4 ticks pulse-to-effect on SELECTED): red pulse on D to advance round-robin index.
 // SELECTED (output): red currently selected request at selector output timing.
 circuit: request-rotator
 
@@ -60,28 +60,25 @@ wires:
 
 tests:
   no-request-produces-no-output:
-    tick 3:
-      assert signal "A" = 0 on pin SELECTED red
-      assert signal "B" = 0 on pin SELECTED red
+    tick 0:
+      assert window [+0, +20]: always nothing on pin SELECTED red
 
   selects-most-requested-when-idle:
     tick 0:
       apply signal "A" = 12 to pin REQ red continuously
       apply signal "B" = 8 to pin REQ red continuously
-    tick 6:
-      assert signal "A" = 12 on pin SELECTED red
-      assert signal "B" = 0 on pin SELECTED red
+      assert at +0: always nothing on pin SELECTED red
+      assert window [+1, +12]: always exactly("A" = 12) on pin SELECTED red
 
   step-pulse-advances-selection:
     tick 0:
       apply signal "A" = 12 to pin REQ red continuously
       apply signal "B" = 8 to pin REQ red continuously
-    tick 6:
-      assert signal "A" = 12 on pin SELECTED red
+      assert window [+1, +6]: always exactly("A" = 12) on pin SELECTED red
     tick 7:
       apply signal "D" = 1 to pin STEP red
-    tick 12:
-      assert signal "B" = 8 on pin SELECTED red
+      assert window [+0, +3]: always exactly("A" = 12) on pin SELECTED red
+      assert window [+4, +12]: always exactly("B" = 8) on pin SELECTED red
 
   step-pulse-does-not-flicker-index:
     tick 0:
@@ -89,15 +86,8 @@ tests:
       apply signal "B" = 8 to pin REQ red continuously
     tick 7:
       apply signal "D" = 1 to pin STEP red
-    tick 12:
-      assert signal "I" = 1 on network IndexToSelect
-      assert signal "B" = 8 on pin SELECTED red
-    tick 13:
-      assert signal "I" = 1 on network IndexToSelect
-      assert signal "B" = 8 on pin SELECTED red
-    tick 14:
-      assert signal "I" = 1 on network IndexToSelect
-      assert signal "B" = 8 on pin SELECTED red
+      assert window [+4, +14]: always exactly("I" = 1) on network IndexToSelect
+      assert window [+4, +14]: always exactly("B" = 8) on pin SELECTED red
 
   second-step-wraps-back-to-first-request:
     tick 0:
@@ -105,11 +95,32 @@ tests:
       apply signal "B" = 8 to pin REQ red continuously
     tick 7:
       apply signal "D" = 1 to pin STEP red
-    tick 12:
-      assert signal "B" = 8 on pin SELECTED red
+      assert window [+4, +10]: always exactly("B" = 8) on pin SELECTED red
     tick 20:
       apply signal "D" = 1 to pin STEP red
-    tick 27:
-      assert signal "A" = 12 on pin SELECTED red
-      assert signal "B" = 0 on pin SELECTED red
+      assert window [+0, +3]: always exactly("B" = 8) on pin SELECTED red
+      assert window [+4, +12]: always exactly("A" = 12) on pin SELECTED red
+
+  held-step-high-only-advances-once:
+    tick 0:
+      apply signal "A" = 12 to pin REQ red continuously
+      apply signal "B" = 8 to pin REQ red continuously
+    tick 7:
+      apply signal "D" = 1 to pin STEP red continuously
+      assert window [+4, +20]: always exactly("I" = 1) on network IndexToSelect
+      assert window [+4, +20]: always exactly("B" = 8) on pin SELECTED red
+
+  removed-request-renormalizes-selection-without-step:
+    tick 0:
+      apply signal "A" = 12 to pin REQ red continuously
+      apply signal "B" = 8 to pin REQ red continuously
+    tick 7:
+      apply signal "D" = 1 to pin STEP red
+      assert window [+4, +7]: always exactly("B" = 8) on pin SELECTED red
+    tick 15:
+      apply signal "B" = 0 to pin REQ red continuously
+      assert at +0: always exactly("B" = 8) on pin SELECTED red
+      assert window [+1, +10]: never signal "B" = 8 on pin SELECTED red
+      assert window [+0, +2]: never signal "A" = 12 on pin SELECTED red
+      assert window [+3, +10]: always exactly("A" = 12) on pin SELECTED red
 
