@@ -210,30 +210,193 @@ Inside each test, define per-tick blocks:
 
 Inside each tick block, supported actions:
 
-- `apply signal <signal> = <integer> to network <network-id>`
-- `apply signal <signal> = <integer> to network <network-id> continuously`
-- `apply signal <signal> = <integer> to pin <combinator-id> <red|green>`
-- `apply signal <signal> = <integer> to pin <combinator-id> <red|green> continuously`
-- `assert signal <signal> = <integer> on network <network-id>`
-- `assert signal <signal> = <integer> on pin <combinator-id> <red|green>`
-- `assert signal <signal> = <integer> on input of <combinator-id>`
-- `assert signal <signal> = <integer> on output of <combinator-id>`
+- `apply [signal] <signal> = <integer> to network <network-id>`
+- `apply [signal] <signal> = <integer> to network <network-id> continuously`
+- `apply [signal] <signal> = <integer> to pin <combinator-id> <red|green>`
+- `apply [signal] <signal> = <integer> to pin <combinator-id> <red|green> continuously`
+- `assert [signal] <signal> = <integer> on network <network-id>`
+- `assert [signal] <signal> = <integer> on pin <combinator-id> <red|green>`
+- `assert [signal] <signal> = <integer> on input of <combinator-id>`
+- `assert [signal] <signal> = <integer> on output of <combinator-id>`
 - `set constant combinator <combinator-id> signals:` plus nested signal assignments
+
+`[signal]` means the literal keyword `signal` is optional for compatibility.
 
 Test action semantics
 
-- `apply signal`: injects an external input at that tick onto the named network's representative connector.
-- `apply signal ... to pin <id> <red|green>`: resolves the named pin endpoint on that wire color to its attached network and injects exactly as a network-targeted apply would.
-- `apply signal ... continuously`: starts or updates a continuous injected value from that tick onward.
+- `apply [signal]`: injects an external input at that tick onto the named network's representative connector.
+- `apply [signal] ... to pin <id> <red|green>`: resolves the named pin endpoint on that wire color to its attached network and injects exactly as a network-targeted apply would.
+- `apply [signal] ... continuously`: starts or updates a continuous injected value from that tick onward.
   - continuous values are applied every tick until overridden by another continuous assignment for the same `<network-id>` + `<signal>`.
   - assigning `0` continuously stops the continuous injection for that `<network-id>` + `<signal>`.
-- `assert signal ... on pin <id> <red|green>`: resolves the named pin endpoint on that wire color to its attached network and checks the network signal value.
+- `assert [signal] ... on pin <id> <red|green>`: resolves the named pin endpoint on that wire color to its attached network and checks the network signal value.
 - `set constant combinator ... signals:`:
   - sets an override signal map for that constant combinator starting at that tick,
   - implemented by injecting per-tick deltas vs original blueprint constants.
 - `assert ... on network`: checks the network signal value on that tick.
 - `assert ... on input of`: checks the sum of matching input-connector signals across red+green networks.
 - `assert ... on output of`: checks output-connector signal value without double-counting mirrored red/green broadcasts.
+
+Temporal test semantics (non-breaking)
+
+Existing `tests:` syntax and behavior remain unchanged. The forms below are additive.
+
+Goals:
+
+- Validate correctness and latency without binding tests to exact tick numbers.
+- Allow circuit refactors that shift internal pipeline timing as long as bounded latency and behavior contracts are preserved.
+- Keep deterministic evaluation and machine-readable failures.
+
+Non-breaking rule:
+
+- Existing `tick <n>:` blocks and all existing actions/assertions continue to parse and run exactly as before.
+- New syntax forms below are additive.
+
+Extended test block headers
+
+Inside a test, in addition to `tick <n>:` blocks, the following block headers are allowed in the same position:
+
+- `whenever <condition>:`
+- `rising_edge <condition>:`
+- `event <event-name>:`
+
+Header semantics:
+
+- `whenever <condition>:` level-triggered. The block is evaluated on each tick where the condition is true.
+- `rising_edge <condition>:` rising-edge triggered. The block is evaluated only on ticks where condition transitions false->true.
+- `event <event-name>:` event-triggered. The block is evaluated once for each occurrence of `<event-name>`.
+
+Event statement
+
+Inside any test block (`tick`, `whenever`, `rising_edge`, or `event`), allow:
+
+- `raise event <event-name>`
+
+Event semantics:
+
+- Events are scoped to a single test and do not leak across tests.
+- Each `raise event` creates one event occurrence at the current tick.
+- Multiple raises of the same event in one tick create multiple occurrences.
+
+Window assertions
+
+New assertion form:
+
+- `assert window [<start>, <end>]: <window-check>`
+
+Window range forms:
+
+- Relative window: `assert window [+0, +8]: ...`
+- Absolute window: `assert window [0, 8]: ...`
+
+Range semantics:
+
+- Bounds are inclusive.
+- `<start>` and `<end>` are integers.
+- Relative ranges require signed offsets (`+n` or `-n`) and are interpreted relative to the current block-anchor tick.
+- Absolute ranges are global simulation ticks.
+- `<start>` must be `<= <end>` after resolving relative offsets.
+
+Window checks
+
+After `assert window [..]:`, supported checks are:
+
+- `never <condition>`
+- `always <condition>`
+- `sometimes <condition>`
+
+Condition form in temporal checks:
+
+- Use existing signal-target comparison shape and allow signal shorthands.
+- Omit the literal word `signal`.
+- Examples:
+  - `"A" = 7 on pin OUT red`
+  - `"X" = 0 on network LatchOut`
+  - `"A" > 0 on pin IN red`
+
+Block-anchor tick rules (for relative windows)
+
+- In `tick <n>:` blocks, anchor tick = `n`.
+- In `whenever <condition>:` blocks, anchor tick = current tick where condition evaluated true.
+- In `rising_edge <condition>:` blocks, anchor tick = rising-edge tick.
+- In `event <event-name>:` blocks, anchor tick = event occurrence tick.
+
+Evaluation model
+
+- `never`: passes if condition is false for every tick in window.
+- `always`: passes if condition is true for every tick in window.
+- `sometimes`: passes if condition is true for at least one tick in window.
+
+Failure timing:
+
+- `never` and `always` may fail as soon as a violating tick is observed.
+- `sometimes` fails only after the window end is reached without a match.
+
+Interaction with simulation horizon:
+
+- If a resolved window extends beyond simulated final tick, evaluate assertion status on observed ticks.
+- If status is already decidable as pass before horizon end, pass the assertion.
+- If status is already decidable as fail before horizon end, fail the assertion.
+- If status is undecidable because the missing tail could change the outcome, fail with a horizon-ambiguity error.
+
+Decidability guidance:
+
+- `sometimes`: pass early once a matching tick is seen; if no match observed before truncation, horizon-ambiguity fail.
+- `never`: fail early on first violation; pass only when entire window is observed.
+- `always`: fail early on first violation; pass only when entire window is observed.
+
+Deterministic ordering
+
+For each simulation tick, process test logic in this order:
+
+1. Evaluate and execute matching `tick <n>:` blocks for this tick.
+2. Evaluate and execute matching `rising_edge <condition>:` blocks for this tick.
+3. Evaluate and execute matching `whenever <condition>:` blocks for this tick.
+4. Dispatch `event <event-name>:` blocks for events raised during steps 1-3 of the same tick, in raise order.
+
+This ordering ensures deterministic behavior and reproducible event-relative windows.
+
+Validation rules (new)
+
+- `assert window` must have exactly one range and one window-check.
+- Relative ranges must use signed offsets on both bounds.
+- `event <event-name>` and `raise event <event-name>` require non-empty event names matching identifier token rules used for test names.
+- `rising_edge`/`whenever` conditions use the same comparator set as decider conditions (`<`, `<=`, `>`, `>=`, `=`, `==`, `!=`, `≤`, `≥`, `≠`).
+
+Examples
+
+Bounded latency without exact arrival tick:
+
+```
+tests:
+  bounded-latency:
+    rising_edge "A" > 0 on pin IN red:
+      assert window [+0, +5]: sometimes "A" = 7 on pin OUT red
+```
+
+No-flicker contract around a custom event:
+
+```
+tests:
+  no-flicker:
+    rising_edge "A" > 0 on pin IN red:
+      raise event MY_EVENT
+
+    event MY_EVENT:
+      assert window [+0, +8]: never "X" = 1 on pin OUT red
+      assert window [+0, +5]: sometimes "A" = 7 on pin OUT red
+```
+
+Absolute global window assertion:
+
+```
+tests:
+  absolute-window:
+    tick 0:
+      apply signal "A" = 1 to pin IN red continuously
+    tick 1:
+      assert window [0, 8]: always "A" >= 0 on pin OUT red
+```
 
 Compile behavior
 
@@ -266,9 +429,23 @@ Test behavior
 
 `test` runs each DSL test independently:
 
-- simulation ticks = `max(action.tick) + 1`
+- simulation ticks are computed from required evaluation horizon and may grow during execution:
+  - initial base horizon = `max(action.tick) + 1` (legacy behavior)
+  - include any temporal windows whose endpoints are computable before simulation starts
+  - during each simulation step, if any unresolved temporal window becomes computable, automatically extend horizon to include that window end tick + 1
+  - if a simulation step is reached where every unresolved temporal window is currently incomputable, terminate simulation at that step and evaluate unresolved temporal assertions using the horizon-ambiguity rules from the temporal section
 - pass/fail per assertion and per test
 - returns simulation frames to support debugging
+
+Temporal horizon computability:
+
+- A temporal window endpoint is computable when its anchor tick is statically known from the test structure.
+- `tick <n>:` anchors are statically known.
+- `event <name>:` anchors are statically known only when every event occurrence that can trigger the block is produced from statically known anchors (for example, `tick` blocks or other statically anchored events).
+- `whenever <condition>:` and `rising_edge <condition>:` anchors are generally runtime-dependent and not statically computable.
+- Runtime-dependent anchors may become computable at runtime when the triggering tick is observed.
+- When such a runtime anchor becomes computable, resolve its window endpoint immediately and extend horizon as described above.
+- If runtime anchors remain unresolved and no further windows are computable, stop simulation and apply the existing horizon-ambiguity rule from the temporal section.
 
 Errors and validation
 
@@ -282,9 +459,9 @@ Example
 ```
 combinators:
   1: constant
-    "signal-A" = 1
+    "A" = 1
   A1: arithmetic
-    "signal-A" RG * 3 -> "signal-B"
+    "A" RG * 3 -> "B"
   Sel: selector
     operation: rocket-capacity
 
@@ -297,13 +474,13 @@ wires:
 tests:
   apply-boost:
     tick 0:
-      apply signal "signal-A" = 2 to network InputNet
+      apply "A" = 2 to network InputNet
     tick 1:
-      assert signal "signal-B" = 9 on output of A1
+      assert "B" = 9 on output of A1
   set-constant:
     tick 0:
       set constant combinator 1 signals:
-        "signal-A" = 4
+        "A" = 4
     tick 1:
-      assert signal "signal-B" = 12 on output of A1
+      assert "B" = 12 on output of A1
 ```
