@@ -1150,7 +1150,7 @@ function parseTestActions(lines: SourceLine[], testName: string): { actions: Dsl
       }
 
       if (parsedHeader.kind !== 'tick') {
-        throw new Error(`Line ${line.line}: only 'raise event' and 'assert window' actions are allowed in ${parsedHeader.kind} blocks.`);
+        throw new Error(`Line ${line.line}: only 'raise event', 'assert window', 'assert at', and 'assert:' actions are allowed in ${parsedHeader.kind} blocks.`);
       }
 
       actions.push(parseSingleTickAction(line.text, line.line, parsedHeader.tick));
@@ -1217,33 +1217,42 @@ function parseTemporalAction(text: string, line: number): DslTemporalAction | un
     const endRaw = windowMatch[2].trim();
     const mode = windowMatch[3].toLowerCase() as DslWindowCheckMode;
     const condition = parseDslCondition(windowMatch[4], line);
-
-    const signedStart = /^[+-]\d+$/.test(startRaw);
-    const signedEnd = /^[+-]\d+$/.test(endRaw);
-    const plainStart = /^-?\d+$/.test(startRaw);
-    const plainEnd = /^-?\d+$/.test(endRaw);
-    if ((!signedStart || !signedEnd) && (!plainStart || !plainEnd)) {
-      throw new Error(`Line ${line}: window range must be either relative '[+a, +b]'/'[-a, +b]' or absolute '[a, b]'.`);
-    }
-    const relative = signedStart && signedEnd;
-    if (!relative && (signedStart || signedEnd)) {
-      throw new Error(`Line ${line}: relative windows require signed offsets on both bounds.`);
-    }
-
-    const start = Number(startRaw);
-    const end = Number(endRaw);
-    if (!Number.isInteger(start) || !Number.isInteger(end)) {
-      throw new Error(`Line ${line}: window bounds must be integers.`);
-    }
-    if (start > end) {
-      throw new Error(`Line ${line}: window start must be <= window end.`);
-    }
+    const range = parseWindowRange(startRaw, endRaw, line);
 
     return {
       kind: 'assert-window',
       line,
-      range: { relative, start, end },
+      range,
       mode,
+      condition
+    };
+  }
+
+  const atMatch = /^assert\s+at\s+([^:\s]+)\s*:\s*(never|always|sometimes)\s+(.+)$/i.exec(text);
+  if (atMatch) {
+    const tickRaw = atMatch[1].trim();
+    const mode = atMatch[2].toLowerCase() as DslWindowCheckMode;
+    const condition = parseDslCondition(atMatch[3], line);
+
+    const range = parseWindowRange(tickRaw, tickRaw, line);
+
+    return {
+      kind: 'assert-window',
+      line,
+      range,
+      mode,
+      condition
+    };
+  }
+
+  const immediateMatch = /^assert\s*:\s*(.+)$/i.exec(text);
+  if (immediateMatch) {
+    const condition = parseDslCondition(immediateMatch[1], line);
+    return {
+      kind: 'assert-window',
+      line,
+      range: { relative: true, start: 0, end: 0 },
+      mode: 'always',
       condition
     };
   }
@@ -1251,8 +1260,42 @@ function parseTemporalAction(text: string, line: number): DslTemporalAction | un
   return undefined;
 }
 
+function parseWindowRange(startRaw: string, endRaw: string, line: number): DslWindowRange {
+  const signedStart = /^[+-]\d+$/.test(startRaw);
+  const signedEnd = /^[+-]\d+$/.test(endRaw);
+  const plainStart = /^-?\d+$/.test(startRaw);
+  const plainEnd = /^-?\d+$/.test(endRaw);
+  if ((!signedStart || !signedEnd) && (!plainStart || !plainEnd)) {
+    throw new Error(`Line ${line}: window range must be either relative '[+a, +b]'/'[-a, +b]' or absolute '[a, b]'.`);
+  }
+  const relative = signedStart && signedEnd;
+  if (!relative && (signedStart || signedEnd)) {
+    throw new Error(`Line ${line}: relative windows require signed offsets on both bounds.`);
+  }
+
+  const start = Number(startRaw);
+  const end = Number(endRaw);
+  if (!Number.isInteger(start) || !Number.isInteger(end)) {
+    throw new Error(`Line ${line}: window bounds must be integers.`);
+  }
+  if (start > end) {
+    throw new Error(`Line ${line}: window start must be <= window end.`);
+  }
+
+  return { relative, start, end };
+}
+
 function parseDslCondition(text: string, line: number): DslCondition {
   const trimmed = text.trim();
+  const nothingMatch = /^nothing\s+on\s+(network|pin|input|output)\s+(.+)$/i.exec(trimmed);
+  if (nothingMatch) {
+    return {
+      kind: 'exact',
+      entries: [],
+      target: parseConditionTarget(nothingMatch[1], nothingMatch[2], line)
+    };
+  }
+
   const exact = parseExactFunctionCall(trimmed, line);
   if (exact) {
     const targetMatch = /^on\s+(network|pin|input|output)\s+(.+)$/i.exec(exact.after);
@@ -1269,7 +1312,7 @@ function parseDslCondition(text: string, line: number): DslCondition {
 
   const match = /^(?:signal\s+)?(.+?)\s*(<=|>=|==|!=|=|<|>|≤|≥|≠)\s*(-?\d+)\s+on\s+(network|pin|input|output)\s+(.+)$/i.exec(trimmed);
   if (!match) {
-    throw new Error(`Line ${line}: expected condition '<signal> <comparator> <integer> on <network|pin|input|output> ...' or 'exactly(...) on <target>'.`);
+    throw new Error(`Line ${line}: expected condition '<signal> <comparator> <integer> on <network|pin|input|output> ...' or 'exactly(...) on <target>' or 'nothing on <target>'.`);
   }
 
   const signal = parseSignalToken(match[1], line);
@@ -1516,6 +1559,16 @@ function parseSingleTickAction(text: string, line: number, tick: number): DslTes
       side: 'pin',
       combinatorId: assertIoMatch[3].trim(),
       wire: assertIoMatch[4].toLowerCase() as WireColor
+    };
+  }
+
+  const nothingAssert = /^assert\s+nothing\s+on\s+(network|pin|input|output)\s+(.+)$/i.exec(text);
+  if (nothingAssert) {
+    return {
+      kind: 'assert-exact-bag',
+      tick,
+      entries: [],
+      target: parseConditionTarget(nothingAssert[1], nothingAssert[2], line)
     };
   }
 

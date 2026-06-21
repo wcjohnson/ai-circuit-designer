@@ -216,6 +216,27 @@ tests:
   assert.equal(result.tests[0]?.passed, true);
 });
 
+test('assert nothing on <target> is an alias for assert exactly() on <target>', () => {
+  const source = `
+combinators:
+  P1: pole medium-electric-pole
+  P2: pole medium-electric-pole
+
+wires:
+  network N: red
+    P1 -> P2
+
+tests:
+  empty-nothing:
+    tick 0:
+      assert nothing on network N
+`;
+
+  const result = runDslTests(source);
+  assert.equal(result.passed, true);
+  assert.equal(result.tests[0]?.passed, true);
+});
+
 test('exactly(...) entries reject non-equality comparators', () => {
   const source = `
 combinators:

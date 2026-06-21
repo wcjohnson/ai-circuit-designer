@@ -153,8 +153,95 @@ tests:
 
   assert.throws(
     () => runDslTests(source),
-    /only 'raise event' and 'assert window' actions are allowed/
+    /only 'raise event', 'assert window', 'assert at', and 'assert:' actions are allowed/
   );
+});
+
+test('assert: shorthand is equivalent to assert at +0: always', () => {
+  const source = `
+combinators:
+  C: constant
+    "A" = 1
+
+wires:
+  network N: red
+    C -> C
+
+tests:
+  immediate-assert:
+    tick 0:
+      assert: "A" = 1 on network N
+`;
+
+  const result = runDslTests(source);
+  assert.equal(result.passed, true);
+  const windowAssertions = (result.tests[0]?.assertions ?? []).filter((entry) => entry.description.includes('assert window'));
+  assert.equal(windowAssertions.length, 1);
+});
+
+test('assert: supports exactly/nothing condition forms', () => {
+  const source = `
+combinators:
+  P1: pole medium-electric-pole
+  P2: pole medium-electric-pole
+
+wires:
+  network N: red
+    P1 -> P2
+
+tests:
+  immediate-bag-assert:
+    tick 0:
+      assert: nothing on network N
+`;
+
+  const result = runDslTests(source);
+  assert.equal(result.passed, true);
+});
+
+test('assert at +T shorthand works for relative single-tick temporal checks', () => {
+  const source = `
+combinators:
+  SRC: io medium-electric-pole
+  AMP: arithmetic
+    "A" R * 1 -> "A"
+  OUT: io medium-electric-pole
+
+wires:
+  network In: red
+    SRC -> AMP in
+  network Out: red
+    AMP out -> OUT
+
+tests:
+  at-relative:
+    tick 0:
+      apply "A" = 9 to pin SRC red
+      assert at +1: always "A" = 9 on pin OUT red
+`;
+
+  const result = runDslTests(source);
+  assert.equal(result.passed, true);
+});
+
+test('assert at T shorthand works for absolute single-tick temporal checks', () => {
+  const source = `
+combinators:
+  C: constant
+    "A" = 5
+
+wires:
+  network N: red
+    C -> C
+
+tests:
+  at-absolute:
+    tick 0:
+      assert at 0: always "A" = 5 on network N
+`;
+
+  const result = runDslTests(source);
+  assert.equal(result.passed, true);
 });
 
 test('window assertions require explicit never/always/sometimes keyword', () => {
@@ -304,6 +391,28 @@ tests:
       raise event GOOD
     event GOOD:
       assert window [+0, +0]: always exactly("A" = 1, "B" = 2) on network N
+`;
+
+  const result = runDslTests(source);
+  assert.equal(result.passed, true);
+});
+
+test('temporal conditions support nothing alias for empty bag checks', () => {
+  const source = `
+combinators:
+  P1: pole medium-electric-pole
+  P2: pole medium-electric-pole
+
+wires:
+  network N: red
+    P1 -> P2
+
+tests:
+  nothing-temporal:
+    rising_edge nothing on network N:
+      raise event EMPTY
+    event EMPTY:
+      assert window [+0, +0]: always nothing on network N
 `;
 
   const result = runDslTests(source);

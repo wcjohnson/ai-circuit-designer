@@ -222,6 +222,10 @@ Inside each tick block, supported actions:
 - `assert exactly(<signal> = <integer>[, <signal> = <integer> ...]) on pin <combinator-id> <red|green>`
 - `assert exactly(<signal> = <integer>[, <signal> = <integer> ...]) on input of <combinator-id>`
 - `assert exactly(<signal> = <integer>[, <signal> = <integer> ...]) on output of <combinator-id>`
+- `assert nothing on network <network-id>`
+- `assert nothing on pin <combinator-id> <red|green>`
+- `assert nothing on input of <combinator-id>`
+- `assert nothing on output of <combinator-id>`
 - `set constant combinator <combinator-id> signals:` plus nested signal assignments
 
 `[signal]` means the literal keyword `signal` is optional for compatibility.
@@ -235,6 +239,7 @@ Test action semantics
   - assigning `0` continuously stops the continuous injection for that `<network-id>` + `<signal>`.
 - `assert [signal] ... on pin <id> <red|green>`: resolves the named pin endpoint on that wire color to its attached network and checks the network signal value.
 - `assert exactly(...) on <target>`: checks full signal-bag equality for that target.
+  - `assert nothing on <target>` is an alias for `assert exactly() on <target>` and is the preferred empty-bag form for readability.
   - comparison is bag-wide, not single-signal.
   - only `=` is allowed inside `exactly(...)` entries.
   - signal order in `exactly(...)` is not significant.
@@ -275,6 +280,7 @@ Inside a test, in addition to `tick <n>:` blocks, the following block headers ar
 
 - Scalar comparison: `<signal> <comparator> <integer> on <target>`
 - Bag equality: `exactly(<signal> = <integer>[, <signal> = <integer> ...]) on <target>`
+- Empty bag alias: `nothing on <target>` (equivalent to `exactly() on <target>`, preferred)
 
 `<target>` forms:
 
@@ -306,11 +312,23 @@ Window assertions
 New assertion form:
 
 - `assert window [<start>, <end>]: <window-check>`
+- `assert at <tick-or-offset>: <window-check>`
+- `assert: <condition>`
+
+Shorthand semantics:
+
+- `assert at +T: <window-check>` is shorthand for `assert window [+T, +T]: <window-check>`.
+- `assert at T: <window-check>` is shorthand for `assert window [T, T]: <window-check>`.
+- Relative `assert at` uses signed offsets (`+n`/`-n`); absolute `assert at` uses plain integers.
+- `assert: <condition>` is shorthand for `assert at +0: always <condition>`.
 
 Window range forms:
 
 - Relative window: `assert window [+0, +8]: ...`
 - Absolute window: `assert window [0, 8]: ...`
+- Relative single-tick shorthand: `assert at +3: ...`
+- Absolute single-tick shorthand: `assert at 12: ...`
+- Immediate single-tick shorthand: `assert: ...` (current block-anchor tick)
 
 Range semantics:
 
@@ -322,7 +340,7 @@ Range semantics:
 
 Window checks
 
-After `assert window [..]:`, supported checks are:
+After `assert window [..]:` or `assert at ..:`, supported checks are:
 
 - `never <condition>`
 - `always <condition>`
@@ -337,6 +355,7 @@ Condition form in temporal checks:
   - `"X" = 0 on network LatchOut`
   - `"A" > 0 on pin IN red`
   - `exactly("A" = 7, "B" = 2) on pin OUT red`
+  - `nothing on pin OUT red`
 
 Block-anchor tick rules (for relative windows)
 
@@ -383,13 +402,17 @@ This ordering ensures deterministic behavior and reproducible event-relative win
 Validation rules (new)
 
 - `assert window` must have exactly one range and one window-check.
+- `assert at` must have exactly one tick-or-offset and one window-check.
+- `assert:` must have exactly one `<condition>` and implies `always` at relative offset `+0`.
 - Relative ranges must use signed offsets on both bounds.
+- Relative `assert at` offsets must be signed (`+n` or `-n`).
 - `event <event-name>` and `raise event <event-name>` require non-empty event names matching identifier token rules used for test names.
 - Scalar `rising_edge`/`whenever` conditions use the same comparator set as decider conditions (`<`, `<=`, `>`, `>=`, `=`, `==`, `!=`, `≤`, `≥`, `≠`).
 - In `exactly(...)`:
   - entries must use `=` only (no `<`, `<=`, `>`, `>=`, `!=`, `==`, `≤`, `≥`, `≠`).
   - each listed signal must be unique.
   - empty lists are allowed and mean the target bag must be empty.
+- `nothing on <target>` is valid wherever `exactly() on <target>` is valid and is preferred in new tests/specs.
 
 Examples
 
@@ -400,6 +423,18 @@ tests:
   bounded-latency:
     rising_edge "A" > 0 on pin IN red:
       assert window [+0, +5]: sometimes "A" = 7 on pin OUT red
+```
+
+Single-tick shorthand assertion:
+
+```
+tests:
+  single-tick-check:
+    tick 0:
+      apply signal "A" = 1 to pin IN red
+      assert at +1: always "A" = 1 on pin MID red
+      assert at 3: always "A" = 1 on pin OUT red
+      assert: "A" = 1 on pin IN red
 ```
 
 No-flicker contract around a custom event:
@@ -433,6 +468,15 @@ tests:
   exact-output:
     tick 2:
       assert exactly("A" = 1, "B" = 2) on output of SUM
+```
+
+Empty bag assertion (preferred spelling):
+
+```
+tests:
+  exact-empty-output:
+    tick 2:
+      assert nothing on output of SUM
 ```
 
 Compile behavior

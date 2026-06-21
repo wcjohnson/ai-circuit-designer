@@ -90,13 +90,22 @@ Assumption policy:
 6. Build `tests:` section.
 - Generate a broad correctness-focused test set, not only a happy path.
 - Include edge/boundary tests when behavior has thresholds or indexing.
-- Include timing tests that verify expected values at relevant ticks (including delayed-output behavior).
+- Prefer temporal assertions (`assert window`, `whenever`, `rising_edge`, `event`) for behavior and latency checks.
+- Encode latency as a contract window, not a single fragile tick:
+  - earliest-arrival guard: `assert window [+0, +(min-1)]: never <condition>` when `min > 0`
+  - latest-arrival guard: `assert window [+min, +max]: sometimes <condition>`
+  - hold/stability guard: `assert window [+start, +end]: always <condition>`
+- For single-tick temporal checks, prefer `assert at +T:` (or `assert at T:` for absolute) instead of `assert window [T, T]:`.
+- For immediate anchor-tick checks (`+0` with `always`), prefer `assert: <condition>` for readability.
+- Use exact bag checks (`exactly(...)`) when the full network/connector contents are part of the contract (for example no extra leaked signals).
+- For empty-bag checks, prefer `nothing on <target>` over `exactly() on <target>` for readability.
+- Keep one or two precise single-tick checks only where the timing itself is an external contract.
 - Include at least one stability/hold test when behavior should persist over multiple ticks.
 - For known upticking/internal counters that can run for long periods, include a practical overflow check (seed near max or force a near-wrap state) and prevent wrap-induced regressions (for example false timeout clears).
 - Apply overflow hardening where growth is structurally expected (timers/counters), but do not add blanket overflow checks to every unrelated input path.
 - Use `apply signal` for network stimuli.
 - Use `set constant combinator ... signals:` for staged fixture changes.
-- Assert at the correct tick accounting for N -> N+1 combinator output delay.
+- Account for N -> N+1 combinator output delay when selecting temporal window bounds.
 - Include output-pollution tests in all circuit designs: simulate unknown external signals applied on public/output-facing networks and verify internal state networks are not corrupted.
 
 6a. Signal back-propagation hardening workflow (required for every new circuit design).
@@ -142,8 +151,22 @@ Assumption policy:
   - Always include output-pollution tests.
   - Add identity output buffers only when those tests indicate harmful pollution risk.
 - If request is ambiguous about tick timing:
-  - Default assertions to first tick where outputs are observable.
+  - Default to bounded temporal windows around first observable output, not exact-tick-only assertions.
   - Note timing assumption.
+
+## Temporal Testing Guidance
+
+- Temporal tests should preserve externally visible semantics while allowing internal rewiring/refactoring.
+- Prefer asserting on public channels (`input`/`output`/public networks) and contract state, not incidental intermediate nets unless those nets are part of the declared contract.
+- For latches/stateful circuits, include all of:
+  - capture/open behavior
+  - hold behavior while gate/control is inactive
+  - re-open/re-latch behavior
+  - pollution isolation (public/output injection does not corrupt internal state)
+- For bag-shaped outputs, prefer `exactly(...)` over a list of scalar `assert signal` checks to prevent unintentional extra signals from passing.
+- For empty bag expectations in temporal tests, prefer `nothing on <target>`.
+- For single-tick bag checks, combine readability forms: `assert at +T: always nothing on <target>` or `assert at +T: always exactly(...) on <target>`.
+- For immediate bag checks at anchor tick, prefer `assert: nothing on <target>` or `assert: exactly(...) on <target>`.
 - If user asks for unsupported simulator selector operations:
   - Do not generate unsupported selector operations.
   - Choose an alternative supported design using arithmetic/decider/constant/pole (or supported selector ops only).
