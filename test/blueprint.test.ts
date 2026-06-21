@@ -210,12 +210,13 @@ test('writes and reads Factorio version-0 compressed blueprint strings', () => {
   const blueprint = generatedNetworkBlueprint();
   const normalized = readBlueprint(blueprint);
   const blueprintString = writeBlueprintString(blueprint);
+  const exportedJson = writeBlueprintJson(blueprint);
 
   assert.match(blueprintString, /^0[A-Za-z0-9+/=]+$/);
   assert.deepEqual(readBlueprintString(blueprintString), normalized);
 
   const inflatedJson = inflateSync(Buffer.from(blueprintString.slice(1), 'base64')).toString('utf8');
-  assert.deepEqual(JSON.parse(inflatedJson), { blueprint: normalized });
+  assert.deepEqual(JSON.parse(inflatedJson), JSON.parse(exportedJson));
 });
 
 test('generated compressed blueprint strings can be imported by the simulator', () => {

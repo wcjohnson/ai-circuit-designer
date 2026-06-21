@@ -275,8 +275,9 @@ export function readBlueprintString(blueprintString: string): FactorioBlueprint 
 
 export function writeBlueprintJson(input: FactorioBlueprint | BlueprintWrapper, options: WriteBlueprintJsonOptions = {}): string {
   const wrapper = wrapBlueprint(input);
+  const exportWrapper = withDefaultFilterQuality(wrapper);
   const spaces = options.pretty === true ? 2 : options.pretty || 0;
-  return JSON.stringify(wrapper, null, spaces);
+  return JSON.stringify(exportWrapper, null, spaces);
 }
 
 export function writeBlueprintString(input: FactorioBlueprint | BlueprintWrapper): BlueprintString {
@@ -297,6 +298,43 @@ export function createBlueprint(entities: SupportedBlueprintEntity[], options: O
     item: 'blueprint',
     ...options,
     entities
+  };
+}
+
+function withDefaultFilterQuality(wrapper: BlueprintWrapper): BlueprintWrapper {
+  return {
+    blueprint: {
+      ...wrapper.blueprint,
+      entities: wrapper.blueprint.entities.map((entity) => {
+        if (entity.name !== 'constant-combinator') {
+          return entity;
+        }
+
+        const constantEntity = entity as ConstantCombinatorEntity;
+        const sections = constantEntity.control_behavior?.sections?.sections;
+        if (!Array.isArray(sections)) {
+          return entity;
+        }
+
+        return {
+          ...constantEntity,
+          control_behavior: {
+            ...constantEntity.control_behavior,
+            sections: {
+              ...constantEntity.control_behavior?.sections,
+              sections: sections.map((section) => ({
+                ...section,
+                filters: section.filters?.map((filter) => ({
+                  ...filter,
+                  quality: filter.quality ?? 'normal',
+                  comparator: filter.comparator ?? '='
+                }))
+              }))
+            }
+          }
+        };
+      })
+    }
   };
 }
 
@@ -327,6 +365,7 @@ export function normalizeBlueprintDocument(data: unknown): FactorioBlueprint {
   validateBlueprint(data);
 
   const normalized = { ...data } as Record<string, unknown>;
+  normalizeQualityDefaultsInPlace(normalized);
   const mergedWires = mergeBlueprintWires(normalized);
 
   const normalizedEntities = normalized.entities;
@@ -346,6 +385,53 @@ export function normalizeBlueprintDocument(data: unknown): FactorioBlueprint {
   }
 
   return normalized as unknown as FactorioBlueprint;
+}
+
+function normalizeQualityDefaultsInPlace(blueprint: Record<string, unknown>): void {
+  const entities = blueprint.entities;
+  if (!Array.isArray(entities)) {
+    return;
+  }
+
+  for (const entity of entities) {
+    if (!isRecord(entity)) {
+      continue;
+    }
+
+    if (entity.name !== 'constant-combinator') {
+      continue;
+    }
+
+    const controlBehavior = isRecord(entity.control_behavior)
+      ? entity.control_behavior as Record<string, unknown>
+      : undefined;
+    const sections = isRecord(controlBehavior?.sections)
+      ? (controlBehavior?.sections as Record<string, unknown>).sections
+      : undefined;
+    if (!Array.isArray(sections)) {
+      continue;
+    }
+
+    for (const section of sections) {
+      if (!isRecord(section) || !Array.isArray(section.filters)) {
+        continue;
+      }
+
+      for (const filter of section.filters) {
+        if (!isRecord(filter)) {
+          continue;
+        }
+
+        if (filter.quality === 'normal') {
+          delete filter.quality;
+        }
+
+        if (filter.comparator === '=') {
+          delete filter.comparator;
+        }
+      }
+    }
+  }
 }
 
 function validateBlueprint(blueprint: Record<string, unknown>): void {
