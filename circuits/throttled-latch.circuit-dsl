@@ -52,16 +52,10 @@ combinators:
     outputs:
       "W" = 1
 
-  WAIT_GATE: decider
+  STEP_GATE: decider
     conditions:
       "W" R != 0
       AND "R" G = 0
-    outputs:
-      "W" = 1
-
-  STEP_GATE: decider
-    conditions:
-      "W" G != 0
       AND "T" R < "H" R
     outputs:
       "W" = 1
@@ -78,13 +72,10 @@ combinators:
     outputs:
       "O" = 1
 
-  TIMEOUT_PREV: arithmetic
-    "O" R + 0 -> "P"
-
   RESET_ON_TIMEOUT: decider
     conditions:
       "O" R != 0
-      AND "P" G = 0
+      AND "R" G = 0
     outputs:
       "R" = 1
 
@@ -97,7 +88,6 @@ wires:
     LATCH_CAPTURE out -> LATCH_HOLD in
     LATCH_CAPTURE out -> LATCH_CLEAN in
     LATCH_HOLD out -> LATCH_HOLD in
-    LATCH_HOLD out -> LATCH_CLEAN in
 
   network LatchStable: red
     LATCH_CLEAN out -> OUT_CLEAN in
@@ -123,14 +113,11 @@ wires:
     TIMEOUT -> TIMEOUT_REACHED in
 
   network WaitSignals: red
-    HAS_OUT out -> WAIT_GATE in
-
-  network WaitGate: green
-    WAIT_GATE out -> STEP_GATE in
-    WAIT_GATE out -> MASK in
+    HAS_OUT out -> STEP_GATE in
 
   network WaitStep: green
     STEP_GATE out -> BUMP in
+    STEP_GATE out -> MASK in
 
   network CountState: red
     MASK out -> MASK in
@@ -139,14 +126,11 @@ wires:
     BUMP out -> MASK in
 
   network TimeoutOut: red
-    TIMEOUT_REACHED out -> TIMEOUT_PREV in
     TIMEOUT_REACHED out -> RESET_ON_TIMEOUT in
 
-  network TimeoutPrev: green
-    TIMEOUT_PREV out -> RESET_ON_TIMEOUT in
-
   network TimeoutReset: green
-    RESET_ON_TIMEOUT out -> WAIT_GATE in
+    RESET_ON_TIMEOUT out -> RESET_ON_TIMEOUT in
+    RESET_ON_TIMEOUT out -> STEP_GATE in
 
 tests:
   captures-nonzero-when-empty:
@@ -171,8 +155,9 @@ tests:
     tick 3:
       assert: exactly("A" = 7) on pin OUT red
       apply signal "A" = 3 to pin IN red continuously
-      assert window [+0, +13]: always exactly("A" = 7) on pin OUT red
-      assert window [+14, +19]: sometimes exactly("A" = 3) on pin OUT red
+      assert window [+0, +9]: always exactly("A" = 7) on pin OUT red
+      assert window [+10, +28]: sometimes exactly("A" = 3) on pin OUT red
+      assert window [+20, +28]: always exactly("A" = 3) on pin OUT red
 
   relatches-after-timeout-expires:
     tick 0:
@@ -181,8 +166,9 @@ tests:
     tick 3:
       assert: exactly("A" = 7) on pin OUT red
       apply signal "A" = 3 to pin IN red continuously
-      assert window [+0, +8]: never exactly("A" = 3) on pin OUT red
-      assert window [+9, +14]: sometimes exactly("A" = 3) on pin OUT red
+      assert window [+0, +6]: never exactly("A" = 3) on pin OUT red
+      assert window [+7, +18]: sometimes exactly("A" = 3) on pin OUT red
+      assert window [+12, +22]: always exactly("A" = 3) on pin OUT red
 
   two-full-relatches-observe-full-duration:
     tick 0:
@@ -191,13 +177,17 @@ tests:
     tick 3:
       assert: exactly("A" = 8) on pin OUT red
       apply signal "A" = 5 to pin IN red continuously
-      assert window [+0, +9]: always exactly("A" = 8) on pin OUT red
-      assert window [+10, +15]: sometimes exactly("A" = 5) on pin OUT red
+      assert window [+0, +5]: always exactly("A" = 8) on pin OUT red
+      assert window [+6, +20]: sometimes exactly("A" = 5) on pin OUT red
+      assert window [+12, +24]: never exactly("A" = 8) on pin OUT red
+      assert window [+16, +20]: always exactly("A" = 5) on pin OUT red
     tick 24:
       assert: exactly("A" = 5) on pin OUT red
       apply signal "A" = 2 to pin IN red continuously
-      assert window [+0, +5]: always exactly("A" = 5) on pin OUT red
-      assert window [+6, +12]: always exactly("A" = 2) on pin OUT red
+      assert window [+0, +2]: always exactly("A" = 5) on pin OUT red
+      assert window [+4, +18]: sometimes exactly("A" = 2) on pin OUT red
+      assert window [+8, +24]: never exactly("A" = 5) on pin OUT red
+      assert window [+12, +24]: always exactly("A" = 2) on pin OUT red
 
   latch-zero-relatch:
     tick 0:
@@ -228,7 +218,7 @@ tests:
     tick 14:
       assert: exactly("A" = 7) on pin OUT red
       apply signal "A" = 2 to pin IN red continuously
-      assert window [+0, +9]: always exactly("A" = 7) on pin OUT red
+      assert window [+0, +8]: always exactly("A" = 7) on pin OUT red
       assert window [+10, +16]: always exactly("A" = 2) on pin OUT red
 
   no-flicker-during-timeout-transition:
@@ -238,11 +228,17 @@ tests:
     tick 3:
       assert: exactly("A" = 8) on pin OUT red
       apply signal "A" = 5 to pin IN red continuously
+      assert window [+0, +5]: always exactly("A" = 8) on pin OUT red
+      assert window [+6, +20]: sometimes exactly("A" = 5) on pin OUT red
+      assert window [+12, +24]: never exactly("A" = 8) on pin OUT red
+      assert window [+16, +20]: always exactly("A" = 5) on pin OUT red
     tick 24:
       assert: exactly("A" = 5) on pin OUT red
       apply signal "A" = 2 to pin IN red continuously
-      assert window [+0, +5]: always exactly("A" = 5) on pin OUT red
-      assert window [+6, +12]: always exactly("A" = 2) on pin OUT red
+      assert window [+0, +2]: always exactly("A" = 5) on pin OUT red
+      assert window [+4, +18]: sometimes exactly("A" = 2) on pin OUT red
+      assert window [+8, +24]: never exactly("A" = 5) on pin OUT red
+      assert window [+12, +24]: always exactly("A" = 2) on pin OUT red
 
   output-pollution-does-not-corrupt-state:
     tick 0:
