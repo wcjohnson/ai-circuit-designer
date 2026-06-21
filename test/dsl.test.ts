@@ -148,6 +148,118 @@ tests:
   );
 });
 
+test('runDslTests supports assert exactly(...) on network targets', () => {
+  const source = `
+combinators:
+  C: constant
+    "A" = 1
+    "B" = 2
+  P: pole medium-electric-pole
+
+wires:
+  network N: red
+    C -> P
+
+tests:
+  exact-bag-network:
+    tick 0:
+      assert exactly("A" = 1, "B" = 2) on network N
+`;
+
+  const result = runDslTests(source);
+  assert.equal(result.passed, true);
+  assert.equal(result.tests[0]?.passed, true);
+});
+
+test('assert exactly(...) fails when target contains extra non-zero signals', () => {
+  const source = `
+combinators:
+  C: constant
+    "A" = 1
+    "B" = 2
+  P: pole medium-electric-pole
+
+wires:
+  network N: red
+    C -> P
+
+tests:
+  extra-signal:
+    tick 0:
+      assert exactly("A" = 1) on network N
+`;
+
+  const result = runDslTests(source);
+  assert.equal(result.passed, false);
+  assert.equal(result.tests[0]?.passed, false);
+  assert.equal(result.tests[0]?.assertions[0]?.passed, false);
+});
+
+test('assert exactly() supports empty expected bag', () => {
+  const source = `
+combinators:
+  P1: pole medium-electric-pole
+  P2: pole medium-electric-pole
+
+wires:
+  network N: red
+    P1 -> P2
+
+tests:
+  empty-exact-bag:
+    tick 0:
+      assert exactly() on network N
+`;
+
+  const result = runDslTests(source);
+  assert.equal(result.passed, true);
+  assert.equal(result.tests[0]?.passed, true);
+});
+
+test('exactly(...) entries reject non-equality comparators', () => {
+  const source = `
+combinators:
+  C: constant
+    "A" = 1
+
+wires:
+  network N: red
+    C -> C
+
+tests:
+  invalid-exact-comparator:
+    tick 0:
+      assert exactly("A" > 0) on network N
+`;
+
+  assert.throws(
+    () => runDslTests(source),
+    /exactly\(\.\.\.\) entries must use '=' only/
+  );
+});
+
+test('exactly(...) entries reject duplicate signals', () => {
+  const source = `
+combinators:
+  C: constant
+    "A" = 1
+
+wires:
+  network N: red
+    C -> C
+
+tests:
+  duplicate-exact-signal:
+    tick 0:
+      assert exactly("A" = 1, "A" = 1) on network N
+`;
+
+  assert.throws(
+    () => runDslTests(source),
+    /duplicate signal/
+  );
+});
+
 test('compileDsl parses item(name[,quality]) signals', () => {
   const source = `
 combinators:

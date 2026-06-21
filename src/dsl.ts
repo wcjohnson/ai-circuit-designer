@@ -230,12 +230,110 @@ interface DslAssertCombinatorSignalAction {
   side: 'input' | 'output';
 }
 
+interface DslAssertExactBagAction {
+  kind: 'assert-exact-bag';
+  tick: number;
+  target: DslConditionTarget;
+  entries: ParsedSignalCount[];
+}
+
 interface DslSetConstantSignalsAction {
   kind: 'set-constant-signals';
   tick: number;
   combinatorId: string;
   signals: ParsedSignalCount[];
 }
+
+type DslComparator = ComparatorString;
+
+interface DslConditionNetworkTarget {
+  kind: 'network';
+  networkId: string;
+}
+
+interface DslConditionIoTarget {
+  kind: 'pin';
+  combinatorId: string;
+  wire: WireColor;
+}
+
+interface DslConditionCombinatorTarget {
+  kind: 'combinator';
+  combinatorId: string;
+  side: 'input' | 'output';
+}
+
+type DslConditionTarget = DslConditionNetworkTarget | DslConditionIoTarget | DslConditionCombinatorTarget;
+
+interface DslScalarCondition {
+  kind: 'scalar';
+  signal: SignalID;
+  comparator: DslComparator;
+  value: number;
+  target: DslConditionTarget;
+}
+
+interface DslExactCondition {
+  kind: 'exact';
+  entries: ParsedSignalCount[];
+  target: DslConditionTarget;
+}
+
+type DslCondition = DslScalarCondition | DslExactCondition;
+
+type DslWindowCheckMode = 'never' | 'always' | 'sometimes';
+
+interface DslWindowRange {
+  relative: boolean;
+  start: number;
+  end: number;
+}
+
+interface DslWindowAssertionAction {
+  kind: 'assert-window';
+  line: number;
+  range: DslWindowRange;
+  mode: DslWindowCheckMode;
+  condition: DslCondition;
+}
+
+interface DslRaiseEventAction {
+  kind: 'raise-event';
+  line: number;
+  eventName: string;
+}
+
+type DslTemporalAction = DslWindowAssertionAction | DslRaiseEventAction;
+
+interface DslTickBlock {
+  kind: 'tick';
+  line: number;
+  tick: number;
+  actions: DslTemporalAction[];
+}
+
+interface DslWheneverBlock {
+  kind: 'whenever';
+  line: number;
+  condition: DslCondition;
+  actions: DslTemporalAction[];
+}
+
+interface DslRisingEdgeBlock {
+  kind: 'rising_edge';
+  line: number;
+  condition: DslCondition;
+  actions: DslTemporalAction[];
+}
+
+interface DslEventBlock {
+  kind: 'event';
+  line: number;
+  eventName: string;
+  actions: DslTemporalAction[];
+}
+
+type DslTestBlock = DslTickBlock | DslWheneverBlock | DslRisingEdgeBlock | DslEventBlock;
 
 type DslTestAction =
   | DslApplySignalAction
@@ -245,11 +343,13 @@ type DslTestAction =
   | DslAssertNetworkSignalAction
   | DslAssertIoSignalAction
   | DslAssertCombinatorSignalAction
+  | DslAssertExactBagAction
   | DslSetConstantSignalsAction;
 
 export interface DslTestDefinition {
   name: string;
   actions: DslTestAction[];
+  blocks?: DslTestBlock[];
 }
 
 interface ParsedDslDocument {
@@ -303,10 +403,28 @@ export function runDslTests(sourceOrCompiled: string | DslCompiledDocument, opti
   const baselineConstantSignals = readConstantSignalsByEntity(compiled.blueprint);
 
   const results: DslTestResult[] = testsToRun.map((test) => {
-    const maxTick = test.actions.reduce((current, action) => Math.max(current, action.tick), 0);
+    const blocks = test.blocks ?? [];
+    const tickBlocks = blocks.filter((block): block is DslTickBlock => block.kind === 'tick');
+
+    const maxTickActionTick = test.actions.reduce((current, action) => Math.max(current, action.tick), 0);
+    const maxTickBlockTick = tickBlocks.reduce((current, block) => Math.max(current, block.tick), 0);
+    const baseHorizonTick = Math.max(maxTickActionTick, maxTickBlockTick);
+
+    let maxStaticWindowEnd = -1;
+    for (const block of tickBlocks) {
+      for (const action of block.actions) {
+        if (action.kind !== 'assert-window') {
+          continue;
+        }
+        const window = resolveWindowRange(action.range, block.tick);
+        maxStaticWindowEnd = Math.max(maxStaticWindowEnd, window.end);
+      }
+    }
+
+    const initialHorizonTick = Math.max(baseHorizonTick, maxStaticWindowEnd);
     const externalInputs = buildExternalInputsForTest(
       test,
-      maxTick,
+      initialHorizonTick,
       networkById,
       entityNumberById,
       ioById,
@@ -314,19 +432,223 @@ export function runDslTests(sourceOrCompiled: string | DslCompiledDocument, opti
     );
     const state = createSimulationState(compiled.blueprint, { inputs: externalInputs });
     const ticks: SimulationResult['ticks'] = [];
-    for (let tick = 0; tick <= maxTick; tick += 1) {
-      ticks.push(state.step());
+
+    const actionsByTick = new Map<number, DslTestAction[]>();
+    for (const action of test.actions) {
+      if (!actionsByTick.has(action.tick)) {
+        actionsByTick.set(action.tick, []);
+      }
+      actionsByTick.get(action.tick)?.push(action);
     }
+
+    const tickTemporalByTick = new Map<number, DslTemporalAction[]>();
+    for (const block of tickBlocks) {
+      if (!tickTemporalByTick.has(block.tick)) {
+        tickTemporalByTick.set(block.tick, []);
+      }
+      tickTemporalByTick.get(block.tick)?.push(...block.actions);
+    }
+
+    const wheneverBlocks = blocks.filter((block): block is DslWheneverBlock => block.kind === 'whenever');
+    const risingBlocks = blocks.filter((block): block is DslRisingEdgeBlock => block.kind === 'rising_edge');
+    const eventBlocks = blocks.filter((block): block is DslEventBlock => block.kind === 'event');
+    let horizonTick = initialHorizonTick;
+    const hasReactiveBlocks = wheneverBlocks.length > 0 || risingBlocks.length > 0 || eventBlocks.length > 0;
+    const reactiveLookaheadTicks = hasReactiveBlocks ? 8 : 0;
+    if (reactiveLookaheadTicks > 0) {
+      horizonTick = Math.max(horizonTick, baseHorizonTick + reactiveLookaheadTicks);
+    }
+
+    const pendingEventsByTick = new Map<number, string[]>();
+    const pendingWindowAssertions: PendingWindowAssertion[] = [];
+    const ambiguityAssertions: DslAssertionResult[] = [];
+    const previousConditions = new Map<string, boolean>();
+
+    for (let tick = 0; tick <= horizonTick; tick += 1) {
+      const tickFrame = state.step();
+      ticks.push(tickFrame);
+
+      const temporalActions = tickTemporalByTick.get(tick) ?? [];
+      processTemporalActions(
+        temporalActions,
+        tick,
+        pendingWindowAssertions,
+        pendingEventsByTick,
+        () => horizonTick,
+        (next) => { horizonTick = Math.max(horizonTick, next); }
+      );
+
+      for (const block of risingBlocks) {
+        const key = `rising:${block.line}`;
+        const current = evaluateCondition(block.condition, tickFrame, networkById, entityNumberById, ioById, test.name, tick);
+        const previous = previousConditions.get(key) ?? false;
+        if (!previous && current) {
+          processTemporalActions(
+            block.actions,
+            tick,
+            pendingWindowAssertions,
+            pendingEventsByTick,
+            () => horizonTick,
+            (next) => { horizonTick = Math.max(horizonTick, next); }
+          );
+        }
+        previousConditions.set(key, current);
+      }
+
+      for (const block of wheneverBlocks) {
+        const current = evaluateCondition(block.condition, tickFrame, networkById, entityNumberById, ioById, test.name, tick);
+        if (current) {
+          processTemporalActions(
+            block.actions,
+            tick,
+            pendingWindowAssertions,
+            pendingEventsByTick,
+            () => horizonTick,
+            (next) => { horizonTick = Math.max(horizonTick, next); }
+          );
+        }
+      }
+
+      const events = pendingEventsByTick.get(tick) ?? [];
+      if (events.length > 0) {
+        for (const eventName of events) {
+          for (const block of eventBlocks) {
+            if (block.eventName !== eventName) {
+              continue;
+            }
+            processTemporalActions(
+              block.actions,
+              tick,
+              pendingWindowAssertions,
+              pendingEventsByTick,
+              () => horizonTick,
+              (next) => { horizonTick = Math.max(horizonTick, next); }
+            );
+          }
+        }
+      }
+
+      for (const pending of pendingWindowAssertions) {
+        if (pending.resolved) {
+          continue;
+        }
+        if (tick < pending.startTick || tick > pending.endTick) {
+          continue;
+        }
+
+        const conditionMet = evaluateCondition(
+          pending.condition,
+          tickFrame,
+          networkById,
+          entityNumberById,
+          ioById,
+          test.name,
+          tick
+        );
+
+        if (pending.mode === 'sometimes') {
+          if (conditionMet) {
+            pending.resolved = true;
+            pending.passed = true;
+            pending.description = `${pending.baseDescription} (matched at tick ${tick})`;
+            pending.actual = 1;
+            continue;
+          }
+        } else if (pending.mode === 'never') {
+          if (conditionMet) {
+            pending.resolved = true;
+            pending.passed = false;
+            pending.description = `${pending.baseDescription} (violated at tick ${tick})`;
+            pending.actual = 0;
+            continue;
+          }
+        } else if (pending.mode === 'always') {
+          if (!conditionMet) {
+            pending.resolved = true;
+            pending.passed = false;
+            pending.description = `${pending.baseDescription} (violated at tick ${tick})`;
+            pending.actual = 0;
+            continue;
+          }
+        }
+
+        if (tick === pending.endTick) {
+          pending.resolved = true;
+          if (pending.mode === 'sometimes') {
+            pending.passed = false;
+            pending.description = `${pending.baseDescription} (no match in window)`;
+            pending.actual = 0;
+          } else {
+            pending.passed = true;
+            pending.description = `${pending.baseDescription} (satisfied)`;
+            pending.actual = 1;
+          }
+        }
+      }
+
+      const hasUnresolvedComputable = pendingWindowAssertions.some((pending) => !pending.resolved && pending.endTick <= horizonTick);
+      const hasFutureTickActions = actionsByTick.size > 0 && Array.from(actionsByTick.keys()).some((scheduledTick) => scheduledTick > tick && scheduledTick <= horizonTick);
+      if (!hasReactiveBlocks && tick >= baseHorizonTick && !hasUnresolvedComputable && !hasFutureTickActions) {
+        for (const pending of pendingWindowAssertions) {
+          if (pending.resolved) {
+            continue;
+          }
+          ambiguityAssertions.push({
+            tick,
+            description: `${pending.baseDescription} (horizon ambiguity: window unresolved by tick ${tick})`,
+            expected: 1,
+            actual: 0,
+            passed: false
+          });
+          pending.resolved = true;
+          pending.passed = false;
+          pending.description = `${pending.baseDescription} (horizon ambiguity)`;
+          pending.actual = 0;
+        }
+        break;
+      }
+    }
+
+    for (const pending of pendingWindowAssertions) {
+      if (pending.resolved) {
+        continue;
+      }
+      ambiguityAssertions.push({
+        tick: pending.anchorTick,
+        description: `${pending.baseDescription} (horizon ambiguity: window unresolved by final simulated tick)`,
+        expected: 1,
+        actual: 0,
+        passed: false
+      });
+      pending.resolved = true;
+      pending.passed = false;
+      pending.description = `${pending.baseDescription} (horizon ambiguity)`;
+      pending.actual = 0;
+    }
+
     const simulation: SimulationResult = {
       ticks,
       ignoredEntities: [...state.ignoredEntities]
     };
 
     const assertions = evaluateAssertions(test, simulation, networkById, entityNumberById, ioById);
+    const temporalAssertions: DslAssertionResult[] = [
+      ...pendingWindowAssertions
+        .filter((pending) => pending.resolved)
+        .map((pending) => ({
+          tick: pending.anchorTick,
+          description: pending.description,
+          expected: 1,
+          actual: pending.actual,
+          passed: pending.passed
+        })),
+      ...ambiguityAssertions
+    ];
+    const combinedAssertions = [...assertions, ...temporalAssertions];
     return {
       name: test.name,
-      passed: assertions.every((assertion) => assertion.passed),
-      assertions,
+      passed: combinedAssertions.every((assertion) => assertion.passed),
+      assertions: combinedAssertions,
       simulation
     };
   });
@@ -335,6 +657,68 @@ export function runDslTests(sourceOrCompiled: string | DslCompiledDocument, opti
     passed: results.every((result) => result.passed),
     tests: results
   };
+}
+
+interface PendingWindowAssertion {
+  mode: DslWindowCheckMode;
+  condition: DslCondition;
+  anchorTick: number;
+  startTick: number;
+  endTick: number;
+  baseDescription: string;
+  description: string;
+  resolved: boolean;
+  passed: boolean;
+  actual: number;
+}
+
+function processTemporalActions(
+  actions: DslTemporalAction[],
+  anchorTick: number,
+  pendingWindowAssertions: PendingWindowAssertion[],
+  pendingEventsByTick: Map<number, string[]>,
+  getHorizon: () => number,
+  setHorizon: (nextTick: number) => void
+): void {
+  for (const action of actions) {
+    if (action.kind === 'raise-event') {
+      if (!pendingEventsByTick.has(anchorTick)) {
+        pendingEventsByTick.set(anchorTick, []);
+      }
+      pendingEventsByTick.get(anchorTick)?.push(action.eventName);
+      continue;
+    }
+
+    const resolved = resolveWindowRange(action.range, anchorTick);
+    const baseDescription = `assert window [${action.range.relative ? `${formatSigned(action.range.start)}, ${formatSigned(action.range.end)}` : `${action.range.start}, ${action.range.end}`}]: ${action.mode} ${describeCondition(action.condition)}`;
+    pendingWindowAssertions.push({
+      mode: action.mode,
+      condition: action.condition,
+      anchorTick,
+      startTick: resolved.start,
+      endTick: resolved.end,
+      baseDescription,
+      description: baseDescription,
+      resolved: false,
+      passed: false,
+      actual: 0
+    });
+    setHorizon(Math.max(getHorizon(), resolved.end));
+  }
+}
+
+function resolveWindowRange(range: DslWindowRange, anchorTick: number): { start: number; end: number } {
+  if (!range.relative) {
+    return { start: range.start, end: range.end };
+  }
+  return {
+    start: anchorTick + range.start,
+    end: anchorTick + range.end
+  };
+}
+
+function formatSigned(value: number): string {
+  return value >= 0 ? `+${value}` : `${value}`;
 }
 
 function parseDsl(source: string, sourcePath?: string): ParsedDslDocument {
@@ -690,41 +1074,38 @@ function parseTests(lines: SourceLine[]): DslTestDefinition[] {
 
     const testName = testHeaderMatch[1].trim();
     const [nextIndex, testBody] = readIndentedBlock(lines, index + 1, baseIndent);
-    const actions = parseTestActions(testBody, testName);
-    tests.push({ name: testName, actions });
+    const { actions, blocks } = parseTestActions(testBody, testName);
+    tests.push({ name: testName, actions, blocks });
     index = nextIndex;
   }
 
   return tests;
 }
 
-function parseTestActions(lines: SourceLine[], testName: string): DslTestAction[] {
+function parseTestActions(lines: SourceLine[], testName: string): { actions: DslTestAction[]; blocks: DslTestBlock[] } {
   if (lines.length === 0) {
-    return [];
+    return { actions: [], blocks: [] };
   }
 
-  const tickIndent = lines[0].indent;
+  const headerIndent = lines[0].indent;
   const actions: DslTestAction[] = [];
+  const blocks: DslTestBlock[] = [];
   let index = 0;
 
   while (index < lines.length) {
-    const tickHeader = lines[index];
-    if (tickHeader.indent !== tickIndent) {
-      throw new Error(`Line ${tickHeader.line}: tick header indentation is invalid in test '${testName}'.`);
+    const header = lines[index];
+    if (header.indent !== headerIndent) {
+      throw new Error(`Line ${header.line}: test block header indentation is invalid in test '${testName}'.`);
     }
 
-    const tickMatch = /^tick\s+(\d+)\s*:$/.exec(tickHeader.text.toLowerCase());
-    if (!tickMatch) {
-      throw new Error(`Line ${tickHeader.line}: expected tick header 'tick <n>:'.`);
-    }
-
-    const tick = Number(tickMatch[1]);
-    const [nextIndex, block] = readIndentedBlock(lines, index + 1, tickIndent);
+    const parsedHeader = parseTestBlockHeader(header.text, header.line, testName);
+    const [nextIndex, block] = readIndentedBlock(lines, index + 1, headerIndent);
     if (block.length === 0) {
-      throw new Error(`Line ${tickHeader.line}: tick ${tick} in test '${testName}' has no actions.`);
+      throw new Error(`Line ${header.line}: block in test '${testName}' has no actions.`);
     }
 
     const actionIndent = block[0].indent;
+    const temporalActions: DslTemporalAction[] = [];
     let blockIndex = 0;
     while (blockIndex < block.length) {
       const line = block[blockIndex];
@@ -734,6 +1115,9 @@ function parseTestActions(lines: SourceLine[], testName: string): DslTestAction[
 
       const setHeader = /^set\s+constant\s+combinator\s+(.+?)\s+signals\s*:\s*$/i.exec(line.text);
       if (setHeader) {
+        if (parsedHeader.kind !== 'tick') {
+          throw new Error(`Line ${line.line}: set constant action is only allowed inside 'tick <n>:' blocks.`);
+        }
         const [afterSet, setBlock] = readIndentedBlock(block, blockIndex + 1, actionIndent);
         if (setBlock.length === 0) {
           throw new Error(`Line ${line.line}: set constant action requires one or more signal assignments.`);
@@ -749,7 +1133,7 @@ function parseTestActions(lines: SourceLine[], testName: string): DslTestAction[
 
         actions.push({
           kind: 'set-constant-signals',
-          tick,
+          tick: parsedHeader.tick,
           combinatorId: setHeader[1].trim(),
           signals
         });
@@ -758,18 +1142,300 @@ function parseTestActions(lines: SourceLine[], testName: string): DslTestAction[
         continue;
       }
 
-      actions.push(parseSingleTickAction(line.text, line.line, tick));
+      const temporalAction = parseTemporalAction(line.text, line.line);
+      if (temporalAction) {
+        temporalActions.push(temporalAction);
+        blockIndex += 1;
+        continue;
+      }
+
+      if (parsedHeader.kind !== 'tick') {
+        throw new Error(`Line ${line.line}: only 'raise event' and 'assert window' actions are allowed in ${parsedHeader.kind} blocks.`);
+      }
+
+      actions.push(parseSingleTickAction(line.text, line.line, parsedHeader.tick));
       blockIndex += 1;
+    }
+
+    if (parsedHeader.kind === 'tick') {
+      blocks.push({ kind: 'tick', line: header.line, tick: parsedHeader.tick, actions: temporalActions });
+    } else if (parsedHeader.kind === 'whenever') {
+      blocks.push({ kind: 'whenever', line: header.line, condition: parsedHeader.condition, actions: temporalActions });
+    } else if (parsedHeader.kind === 'rising_edge') {
+      blocks.push({ kind: 'rising_edge', line: header.line, condition: parsedHeader.condition, actions: temporalActions });
+    } else {
+      blocks.push({ kind: 'event', line: header.line, eventName: parsedHeader.eventName, actions: temporalActions });
     }
 
     index = nextIndex;
   }
 
-  return actions;
+  return { actions, blocks };
+}
+
+function parseTestBlockHeader(
+  text: string,
+  line: number,
+  testName: string
+):
+  | { kind: 'tick'; tick: number }
+  | { kind: 'whenever'; condition: DslCondition }
+  | { kind: 'rising_edge'; condition: DslCondition }
+  | { kind: 'event'; eventName: string } {
+  const tickMatch = /^tick\s+(\d+)\s*:\s*$/i.exec(text);
+  if (tickMatch) {
+    return { kind: 'tick', tick: Number(tickMatch[1]) };
+  }
+
+  const wheneverMatch = /^whenever\s+(.+?)\s*:\s*$/i.exec(text);
+  if (wheneverMatch) {
+    return { kind: 'whenever', condition: parseDslCondition(wheneverMatch[1], line) };
+  }
+
+  const risingMatch = /^rising_edge\s+(.+?)\s*:\s*$/i.exec(text);
+  if (risingMatch) {
+    return { kind: 'rising_edge', condition: parseDslCondition(risingMatch[1], line) };
+  }
+
+  const eventMatch = /^event\s+([A-Za-z][A-Za-z0-9_-]*)\s*:\s*$/i.exec(text);
+  if (eventMatch) {
+    return { kind: 'event', eventName: eventMatch[1] };
+  }
+
+  throw new Error(`Line ${line}: expected block header 'tick <n>:', 'whenever <condition>:', 'rising_edge <condition>:', or 'event <name>:' in test '${testName}'.`);
+}
+
+function parseTemporalAction(text: string, line: number): DslTemporalAction | undefined {
+  const raiseMatch = /^raise\s+event\s+([A-Za-z][A-Za-z0-9_-]*)\s*$/i.exec(text);
+  if (raiseMatch) {
+    return { kind: 'raise-event', line, eventName: raiseMatch[1] };
+  }
+
+  const windowMatch = /^assert\s+window\s*\[\s*([^,\]]+)\s*,\s*([^\]]+)\s*\]\s*:\s*(never|always|sometimes)\s+(.+)$/i.exec(text);
+  if (windowMatch) {
+    const startRaw = windowMatch[1].trim();
+    const endRaw = windowMatch[2].trim();
+    const mode = windowMatch[3].toLowerCase() as DslWindowCheckMode;
+    const condition = parseDslCondition(windowMatch[4], line);
+
+    const signedStart = /^[+-]\d+$/.test(startRaw);
+    const signedEnd = /^[+-]\d+$/.test(endRaw);
+    const plainStart = /^-?\d+$/.test(startRaw);
+    const plainEnd = /^-?\d+$/.test(endRaw);
+    if ((!signedStart || !signedEnd) && (!plainStart || !plainEnd)) {
+      throw new Error(`Line ${line}: window range must be either relative '[+a, +b]'/'[-a, +b]' or absolute '[a, b]'.`);
+    }
+    const relative = signedStart && signedEnd;
+    if (!relative && (signedStart || signedEnd)) {
+      throw new Error(`Line ${line}: relative windows require signed offsets on both bounds.`);
+    }
+
+    const start = Number(startRaw);
+    const end = Number(endRaw);
+    if (!Number.isInteger(start) || !Number.isInteger(end)) {
+      throw new Error(`Line ${line}: window bounds must be integers.`);
+    }
+    if (start > end) {
+      throw new Error(`Line ${line}: window start must be <= window end.`);
+    }
+
+    return {
+      kind: 'assert-window',
+      line,
+      range: { relative, start, end },
+      mode,
+      condition
+    };
+  }
+
+  return undefined;
+}
+
+function parseDslCondition(text: string, line: number): DslCondition {
+  const trimmed = text.trim();
+  const exact = parseExactFunctionCall(trimmed, line);
+  if (exact) {
+    const targetMatch = /^on\s+(network|pin|input|output)\s+(.+)$/i.exec(exact.after);
+    if (!targetMatch) {
+      throw new Error(`Line ${line}: expected 'on <network|pin|input|output> ...' after exactly(...).`);
+    }
+
+    return {
+      kind: 'exact',
+      entries: parseExactEntries(exact.args, line),
+      target: parseConditionTarget(targetMatch[1], targetMatch[2], line)
+    };
+  }
+
+  const match = /^(?:signal\s+)?(.+?)\s*(<=|>=|==|!=|=|<|>|≤|≥|≠)\s*(-?\d+)\s+on\s+(network|pin|input|output)\s+(.+)$/i.exec(trimmed);
+  if (!match) {
+    throw new Error(`Line ${line}: expected condition '<signal> <comparator> <integer> on <network|pin|input|output> ...' or 'exactly(...) on <target>'.`);
+  }
+
+  const signal = parseSignalToken(match[1], line);
+  const comparator = match[2] as DslComparator;
+  const value = Number(match[3]);
+
+  return {
+    kind: 'scalar',
+    signal,
+    comparator,
+    value,
+    target: parseConditionTarget(match[4], match[5], line)
+  };
+}
+
+function parseConditionTarget(targetKindRaw: string, targetTailRaw: string, line: number): DslConditionTarget {
+  const targetKind = targetKindRaw.toLowerCase();
+  const targetTail = targetTailRaw.trim();
+
+  if (targetKind === 'network') {
+    return { kind: 'network', networkId: targetTail };
+  }
+
+  if (targetKind === 'pin') {
+    const pinMatch = /^(.+?)\s+(red|green)$/i.exec(targetTail);
+    if (!pinMatch) {
+      throw new Error(`Line ${line}: pin condition target must be '<id> <red|green>'.`);
+    }
+    return {
+      kind: 'pin',
+      combinatorId: pinMatch[1].trim(),
+      wire: pinMatch[2].toLowerCase() as WireColor
+    };
+  }
+
+  if (targetKind === 'input' || targetKind === 'output') {
+    const sideMatch = /^of\s+(.+)$/i.exec(targetTail);
+    if (!sideMatch) {
+      throw new Error(`Line ${line}: ${targetKind} condition target must be '${targetKind} of <id>'.`);
+    }
+    return {
+      kind: 'combinator',
+      combinatorId: sideMatch[1].trim(),
+      side: targetKind as 'input' | 'output'
+    };
+  }
+
+  throw new Error(`Line ${line}: unsupported condition target '${targetKind}'.`);
+}
+
+function parseExactFunctionCall(text: string, line: number): { args: string; after: string } | undefined {
+  const prefixMatch = /^exactly\s*\(/i.exec(text);
+  if (!prefixMatch) {
+    return undefined;
+  }
+
+  const openIndex = text.indexOf('(');
+  let depth = 0;
+  let inQuote = false;
+  let closeIndex = -1;
+
+  for (let i = openIndex; i < text.length; i += 1) {
+    const ch = text[i];
+    if (ch === '"' && text[i - 1] !== '\\') {
+      inQuote = !inQuote;
+      continue;
+    }
+
+    if (inQuote) {
+      continue;
+    }
+
+    if (ch === '(') {
+      depth += 1;
+    } else if (ch === ')') {
+      depth -= 1;
+      if (depth === 0) {
+        closeIndex = i;
+        break;
+      }
+    }
+  }
+
+  if (closeIndex < 0) {
+    throw new Error(`Line ${line}: missing closing ')' for exactly(...).`);
+  }
+
+  const args = text.slice(openIndex + 1, closeIndex).trim();
+  const after = text.slice(closeIndex + 1).trim();
+  return { args, after };
+}
+
+function parseExactEntries(text: string, line: number): ParsedSignalCount[] {
+  if (text.trim().length === 0) {
+    return [];
+  }
+
+  const entries: ParsedSignalCount[] = [];
+  const seen = new Set<string>();
+
+  for (const rawPart of splitTopLevelCsv(text)) {
+    const part = rawPart.trim();
+    if (part.length === 0) {
+      throw new Error(`Line ${line}: empty entry in exactly(...).`);
+    }
+
+    const comparatorMatch = /^(.*?)\s*(<=|>=|==|!=|=|<|>|≤|≥|≠)\s*(-?\d+)\s*$/.exec(part);
+    if (!comparatorMatch) {
+      throw new Error(`Line ${line}: expected exactly entry '<signal> = <integer>'.`);
+    }
+
+    if (comparatorMatch[2] !== '=') {
+      throw new Error(`Line ${line}: exactly(...) entries must use '=' only.`);
+    }
+
+    const signal = parseSignalToken(comparatorMatch[1], line);
+    const key = signalKey(signal);
+    if (!key) {
+      throw new Error(`Line ${line}: invalid signal in exactly(...).`);
+    }
+    if (seen.has(key)) {
+      throw new Error(`Line ${line}: duplicate signal '${key}' in exactly(...).`);
+    }
+
+    seen.add(key);
+    entries.push({ signal, count: Number(comparatorMatch[3]) });
+  }
+
+  return entries;
+}
+
+function splitTopLevelCsv(text: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let inQuote = false;
+  let start = 0;
+
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (ch === '"' && text[i - 1] !== '\\') {
+      inQuote = !inQuote;
+      continue;
+    }
+    if (inQuote) {
+      continue;
+    }
+    if (ch === '(') {
+      depth += 1;
+      continue;
+    }
+    if (ch === ')') {
+      depth = Math.max(depth - 1, 0);
+      continue;
+    }
+    if (ch === ',' && depth === 0) {
+      parts.push(text.slice(start, i));
+      start = i + 1;
+    }
+  }
+
+  parts.push(text.slice(start));
+  return parts;
 }
 
 function parseSingleTickAction(text: string, line: number, tick: number): DslTestAction {
-  const applyIoContinuousMatch = /^apply\s+signal\s+(.+?)\s*=\s*(-?\d+)\s+to\s+pin\s+(.+?)\s+(red|green)\s+continuously$/i.exec(text);
+  const applyIoContinuousMatch = /^apply\s+(?:signal\s+)?(.+?)\s*=\s*(-?\d+)\s+to\s+pin\s+(.+?)\s+(red|green)\s+continuously$/i.exec(text);
   if (applyIoContinuousMatch) {
     return {
       kind: 'apply-io-signal-continuous',
@@ -782,7 +1448,7 @@ function parseSingleTickAction(text: string, line: number, tick: number): DslTes
     };
   }
 
-  const applyContinuousMatch = /^apply\s+signal\s+(.+?)\s*=\s*(-?\d+)\s+to\s+network\s+(.+?)\s+continuously$/i.exec(text);
+  const applyContinuousMatch = /^apply\s+(?:signal\s+)?(.+?)\s*=\s*(-?\d+)\s+to\s+network\s+(.+?)\s+continuously$/i.exec(text);
   if (applyContinuousMatch) {
     return {
       kind: 'apply-signal-continuous',
@@ -793,7 +1459,7 @@ function parseSingleTickAction(text: string, line: number, tick: number): DslTes
     };
   }
 
-  const applyMatch = /^apply\s+signal\s+(.+?)\s*=\s*(-?\d+)\s+to\s+network\s+(.+)$/i.exec(text);
+  const applyMatch = /^apply\s+(?:signal\s+)?(.+?)\s*=\s*(-?\d+)\s+to\s+network\s+(.+)$/i.exec(text);
   if (applyMatch) {
     return {
       kind: 'apply-signal',
@@ -804,7 +1470,7 @@ function parseSingleTickAction(text: string, line: number, tick: number): DslTes
     };
   }
 
-  const applyIoMatch = /^apply\s+signal\s+(.+?)\s*=\s*(-?\d+)\s+to\s+pin\s+(.+?)\s+(red|green)$/i.exec(text);
+  const applyIoMatch = /^apply\s+(?:signal\s+)?(.+?)\s*=\s*(-?\d+)\s+to\s+pin\s+(.+?)\s+(red|green)$/i.exec(text);
   if (applyIoMatch) {
     return {
       kind: 'apply-io-signal',
@@ -817,7 +1483,7 @@ function parseSingleTickAction(text: string, line: number, tick: number): DslTes
     };
   }
 
-  const assertNetworkMatch = /^assert\s+signal\s+(.+?)\s*=\s*(-?\d+)\s+on\s+network\s+(.+)$/i.exec(text);
+  const assertNetworkMatch = /^assert\s+(?:signal\s+)?(.+?)\s*=\s*(-?\d+)\s+on\s+network\s+(.+)$/i.exec(text);
   if (assertNetworkMatch) {
     return {
       kind: 'assert-network-signal',
@@ -828,7 +1494,7 @@ function parseSingleTickAction(text: string, line: number, tick: number): DslTes
     };
   }
 
-  const assertCombinatorMatch = /^assert\s+signal\s+(.+?)\s*=\s*(-?\d+)\s+on\s+(input|output)\s+of\s+(.+)$/i.exec(text);
+  const assertCombinatorMatch = /^assert\s+(?:signal\s+)?(.+?)\s*=\s*(-?\d+)\s+on\s+(input|output)\s+of\s+(.+)$/i.exec(text);
   if (assertCombinatorMatch) {
     return {
       kind: 'assert-combinator-signal',
@@ -840,7 +1506,7 @@ function parseSingleTickAction(text: string, line: number, tick: number): DslTes
     };
   }
 
-  const assertIoMatch = /^assert\s+signal\s+(.+?)\s*=\s*(-?\d+)\s+on\s+pin\s+(.+?)\s+(red|green)$/i.exec(text);
+  const assertIoMatch = /^assert\s+(?:signal\s+)?(.+?)\s*=\s*(-?\d+)\s+on\s+pin\s+(.+?)\s+(red|green)$/i.exec(text);
   if (assertIoMatch) {
     return {
       kind: 'assert-io-signal',
@@ -851,6 +1517,24 @@ function parseSingleTickAction(text: string, line: number, tick: number): DslTes
       combinatorId: assertIoMatch[3].trim(),
       wire: assertIoMatch[4].toLowerCase() as WireColor
     };
+  }
+
+  const exact = /^assert\s+(.+)$/i.exec(text);
+  if (exact) {
+    const exactCall = parseExactFunctionCall(exact[1].trim(), line);
+    if (exactCall) {
+      const targetMatch = /^on\s+(network|pin|input|output)\s+(.+)$/i.exec(exactCall.after);
+      if (!targetMatch) {
+        throw new Error(`Line ${line}: expected 'on <network|pin|input|output> ...' after exactly(...).`);
+      }
+
+      return {
+        kind: 'assert-exact-bag',
+        tick,
+        entries: parseExactEntries(exactCall.args, line),
+        target: parseConditionTarget(targetMatch[1], targetMatch[2], line)
+      };
+    }
   }
 
   throw new Error(`Line ${line}: unknown test action '${text}'.`);
@@ -1346,7 +2030,42 @@ function evaluateAssertions(
       action.kind !== 'assert-network-signal'
       && action.kind !== 'assert-io-signal'
       && action.kind !== 'assert-combinator-signal'
+      && action.kind !== 'assert-exact-bag'
     ) {
+      continue;
+    }
+
+    if (action.kind === 'assert-exact-bag') {
+      const tickFrame = simulation.ticks[action.tick];
+      if (!tickFrame) {
+        assertions.push({
+          tick: action.tick,
+          description: describeAssertion(action),
+          expected: 1,
+          actual: 0,
+          passed: false
+        });
+        continue;
+      }
+
+      const actualBag = readSignalBagOnTarget(
+        tickFrame,
+        action.target,
+        networkById,
+        entityNumberById,
+        ioById,
+        test.name,
+        action.tick
+      );
+      const expectedBag = exactEntriesToSignalMap(action.entries);
+      const passed = signalMapsEqual(actualBag, expectedBag);
+      assertions.push({
+        tick: action.tick,
+        description: describeAssertion(action),
+        expected: 1,
+        actual: passed ? 1 : 0,
+        passed
+      });
       continue;
     }
 
@@ -1413,6 +2132,89 @@ function evaluateAssertions(
   return assertions;
 }
 
+function evaluateCondition(
+  condition: DslCondition,
+  tickFrame: SimulationResult['ticks'][number],
+  networkById: Map<string, DslCompiledNetwork>,
+  entityNumberById: Map<string, number>,
+  ioById: Map<string, 'io'>,
+  testName: string,
+  tick: number
+): boolean {
+  if (condition.kind === 'exact') {
+    const actualBag = readSignalBagOnTarget(
+      tickFrame,
+      condition.target,
+      networkById,
+      entityNumberById,
+      ioById,
+      testName,
+      tick
+    );
+    const expectedBag = exactEntriesToSignalMap(condition.entries);
+    return signalMapsEqual(actualBag, expectedBag);
+  }
+
+  const key = signalKey(condition.signal);
+  if (!key) {
+    return false;
+  }
+
+  const actualBag = readSignalBagOnTarget(
+    tickFrame,
+    condition.target,
+    networkById,
+    entityNumberById,
+    ioById,
+    testName,
+    tick
+  );
+  const actual = Number(actualBag[key] ?? 0);
+
+  return compareValues(actual, condition.comparator, condition.value);
+}
+
+function compareValues(left: number, comparator: DslComparator, right: number): boolean {
+  switch (comparator) {
+    case '<':
+      return left < right;
+    case '<=':
+    case '≤':
+      return left <= right;
+    case '>':
+      return left > right;
+    case '>=':
+    case '≥':
+      return left >= right;
+    case '=':
+    case '==':
+      return left === right;
+    case '!=':
+    case '≠':
+      return left !== right;
+    default:
+      return false;
+  }
+}
+
+function describeCondition(condition: DslCondition): string {
+  if (condition.kind === 'exact') {
+    const entries = condition.entries
+      .map((entry) => `${signalKey(entry.signal) ?? '<invalid>'} = ${entry.count}`)
+      .join(', ');
+    return `exactly(${entries}) on ${describeConditionTarget(condition.target)}`;
+  }
+
+  const sig = signalKey(condition.signal) ?? '<invalid>';
+  if (condition.target.kind === 'network') {
+    return `${sig} ${condition.comparator} ${condition.value} on network ${condition.target.networkId}`;
+  }
+  if (condition.target.kind === 'pin') {
+    return `${sig} ${condition.comparator} ${condition.value} on pin ${condition.target.combinatorId} ${condition.target.wire}`;
+  }
+  return `${sig} ${condition.comparator} ${condition.value} on ${condition.target.side} of ${condition.target.combinatorId}`;
+}
+
 function readSignalOnNetwork(tickFrame: SimulationResult['ticks'][number], network: DslCompiledNetwork, signal: string): number {
   const frameNetwork = tickFrame.networks.find((candidate) => (
     candidate.wire === network.color
@@ -1450,7 +2252,15 @@ function readSignalOnConnector(
   return values.reduce((chosen, value) => (Math.abs(value) > Math.abs(chosen) ? value : chosen), 0);
 }
 
-function describeAssertion(action: DslAssertNetworkSignalAction | DslAssertIoSignalAction | DslAssertCombinatorSignalAction): string {
+function describeAssertion(
+  action: DslAssertNetworkSignalAction | DslAssertIoSignalAction | DslAssertCombinatorSignalAction | DslAssertExactBagAction
+): string {
+  if (action.kind === 'assert-exact-bag') {
+    const entries = action.entries
+      .map((entry) => `${signalKey(entry.signal) ?? '<invalid>'} = ${entry.count}`)
+      .join(', ');
+    return `assert exactly(${entries}) on ${describeConditionTarget(action.target)}`;
+  }
   if (action.kind === 'assert-network-signal') {
     return `assert signal ${signalKey(action.signal) ?? '<invalid>'} = ${action.value} on network ${action.networkId}`;
   }
@@ -1458,6 +2268,141 @@ function describeAssertion(action: DslAssertNetworkSignalAction | DslAssertIoSig
     return `assert signal ${signalKey(action.signal) ?? '<invalid>'} = ${action.value} on ${action.side} ${action.combinatorId} ${action.wire}`;
   }
   return `assert signal ${signalKey(action.signal) ?? '<invalid>'} = ${action.value} on ${action.side} of ${action.combinatorId}`;
+}
+
+function describeConditionTarget(target: DslConditionTarget): string {
+  if (target.kind === 'network') {
+    return `network ${target.networkId}`;
+  }
+  if (target.kind === 'pin') {
+    return `pin ${target.combinatorId} ${target.wire}`;
+  }
+  return `${target.side} of ${target.combinatorId}`;
+}
+
+function exactEntriesToSignalMap(entries: ParsedSignalCount[]): SignalMap {
+  const map: SignalMap = {};
+  for (const entry of entries) {
+    const key = signalKey(entry.signal);
+    if (!key) {
+      continue;
+    }
+    map[key] = entry.count;
+  }
+  return normalizeSignalMap(map);
+}
+
+function normalizeSignalMap(input: SignalMap): SignalMap {
+  const normalized: SignalMap = {};
+  for (const [key, rawValue] of Object.entries(input)) {
+    const value = Number(rawValue ?? 0);
+    if (value !== 0) {
+      normalized[key] = value;
+    }
+  }
+  return normalized;
+}
+
+function signalMapsEqual(left: SignalMap, right: SignalMap): boolean {
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
+  if (leftKeys.length !== rightKeys.length) {
+    return false;
+  }
+  for (const key of leftKeys) {
+    if (Number(left[key] ?? 0) !== Number(right[key] ?? 0)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function readSignalBagOnTarget(
+  tickFrame: SimulationResult['ticks'][number],
+  target: DslConditionTarget,
+  networkById: Map<string, DslCompiledNetwork>,
+  entityNumberById: Map<string, number>,
+  ioById: Map<string, 'io'>,
+  testName: string,
+  tick: number
+): SignalMap {
+  if (target.kind === 'network') {
+    const network = networkById.get(target.networkId);
+    if (!network) {
+      throw new Error(`Test '${testName}' tick ${tick} references unknown network '${target.networkId}'.`);
+    }
+    return readSignalBagOnNetwork(tickFrame, network);
+  }
+
+  if (target.kind === 'pin') {
+    const network = resolveIoNetworkTarget(
+      testName,
+      tick,
+      'pin',
+      target.combinatorId,
+      target.wire,
+      networkById,
+      entityNumberById,
+      ioById
+    );
+    return readSignalBagOnNetwork(tickFrame, network);
+  }
+
+  const entityNumber = resolveCombinatorReference(target.combinatorId, entityNumberById);
+  const connectorId = target.side === 'input' ? 1 : 2;
+  return readSignalBagOnConnector(tickFrame, entityNumber, connectorId, target.side);
+}
+
+function readSignalBagOnNetwork(tickFrame: SimulationResult['ticks'][number], network: DslCompiledNetwork): SignalMap {
+  const frameNetwork = tickFrame.networks.find((candidate) => (
+    candidate.wire === network.color
+    && candidate.points.some((point) => (
+      point.entityId === network.representativePoint.entityNumber
+      && point.connectorId === network.representativePoint.connectorId
+    ))
+  ));
+
+  return normalizeSignalMap((frameNetwork?.signals ?? {}) as SignalMap);
+}
+
+function readSignalBagOnConnector(
+  tickFrame: SimulationResult['ticks'][number],
+  entityNumber: number,
+  connectorId: number,
+  side: 'input' | 'output'
+): SignalMap {
+  const networks = tickFrame.networks.filter((network) => (
+    network.points.some((point) => point.entityId === entityNumber && point.connectorId === connectorId)
+  ));
+
+  if (networks.length === 0) {
+    return {};
+  }
+
+  const result: SignalMap = {};
+  const signalKeys = new Set<string>();
+  for (const network of networks) {
+    for (const key of Object.keys(network.signals)) {
+      signalKeys.add(key);
+    }
+  }
+
+  for (const key of signalKeys) {
+    const values = networks.map((network) => Number(network.signals[key] ?? 0));
+    if (side === 'input') {
+      const sum = values.reduce((acc, value) => acc + value, 0);
+      if (sum !== 0) {
+        result[key] = sum;
+      }
+    } else {
+      const chosen = values.reduce((acc, value) => (Math.abs(value) > Math.abs(acc) ? value : acc), 0);
+      if (chosen !== 0) {
+        result[key] = chosen;
+      }
+    }
+  }
+
+  return result;
 }
 
 function resolveIoNetworkTarget(

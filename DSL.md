@@ -218,6 +218,10 @@ Inside each tick block, supported actions:
 - `assert [signal] <signal> = <integer> on pin <combinator-id> <red|green>`
 - `assert [signal] <signal> = <integer> on input of <combinator-id>`
 - `assert [signal] <signal> = <integer> on output of <combinator-id>`
+- `assert exactly(<signal> = <integer>[, <signal> = <integer> ...]) on network <network-id>`
+- `assert exactly(<signal> = <integer>[, <signal> = <integer> ...]) on pin <combinator-id> <red|green>`
+- `assert exactly(<signal> = <integer>[, <signal> = <integer> ...]) on input of <combinator-id>`
+- `assert exactly(<signal> = <integer>[, <signal> = <integer> ...]) on output of <combinator-id>`
 - `set constant combinator <combinator-id> signals:` plus nested signal assignments
 
 `[signal]` means the literal keyword `signal` is optional for compatibility.
@@ -230,6 +234,13 @@ Test action semantics
   - continuous values are applied every tick until overridden by another continuous assignment for the same `<network-id>` + `<signal>`.
   - assigning `0` continuously stops the continuous injection for that `<network-id>` + `<signal>`.
 - `assert [signal] ... on pin <id> <red|green>`: resolves the named pin endpoint on that wire color to its attached network and checks the network signal value.
+- `assert exactly(...) on <target>`: checks full signal-bag equality for that target.
+  - comparison is bag-wide, not single-signal.
+  - only `=` is allowed inside `exactly(...)` entries.
+  - signal order in `exactly(...)` is not significant.
+  - each signal may appear at most once in an `exactly(...)` list.
+  - any additional non-zero signal on the target that is not listed causes failure.
+  - omitting a signal means it is expected to be absent/zero on that target.
 - `set constant combinator ... signals:`:
   - sets an override signal map for that constant combinator starting at that tick,
   - implemented by injecting per-tick deltas vs original blueprint constants.
@@ -259,6 +270,18 @@ Inside a test, in addition to `tick <n>:` blocks, the following block headers ar
 - `whenever <condition>:`
 - `rising_edge <condition>:`
 - `event <event-name>:`
+
+`<condition>` forms:
+
+- Scalar comparison: `<signal> <comparator> <integer> on <target>`
+- Bag equality: `exactly(<signal> = <integer>[, <signal> = <integer> ...]) on <target>`
+
+`<target>` forms:
+
+- `network <network-id>`
+- `pin <combinator-id> <red|green>`
+- `input of <combinator-id>`
+- `output of <combinator-id>`
 
 Header semantics:
 
@@ -307,12 +330,13 @@ After `assert window [..]:`, supported checks are:
 
 Condition form in temporal checks:
 
-- Use existing signal-target comparison shape and allow signal shorthands.
-- Omit the literal word `signal`.
+- Use the same `<condition>` forms listed above and allow signal shorthands.
+- Omit the literal word `signal` in scalar comparisons.
 - Examples:
   - `"A" = 7 on pin OUT red`
   - `"X" = 0 on network LatchOut`
   - `"A" > 0 on pin IN red`
+  - `exactly("A" = 7, "B" = 2) on pin OUT red`
 
 Block-anchor tick rules (for relative windows)
 
@@ -361,7 +385,11 @@ Validation rules (new)
 - `assert window` must have exactly one range and one window-check.
 - Relative ranges must use signed offsets on both bounds.
 - `event <event-name>` and `raise event <event-name>` require non-empty event names matching identifier token rules used for test names.
-- `rising_edge`/`whenever` conditions use the same comparator set as decider conditions (`<`, `<=`, `>`, `>=`, `=`, `==`, `!=`, `≤`, `≥`, `≠`).
+- Scalar `rising_edge`/`whenever` conditions use the same comparator set as decider conditions (`<`, `<=`, `>`, `>=`, `=`, `==`, `!=`, `≤`, `≥`, `≠`).
+- In `exactly(...)`:
+  - entries must use `=` only (no `<`, `<=`, `>`, `>=`, `!=`, `==`, `≤`, `≥`, `≠`).
+  - each listed signal must be unique.
+  - empty lists are allowed and mean the target bag must be empty.
 
 Examples
 
@@ -396,6 +424,15 @@ tests:
       apply signal "A" = 1 to pin IN red continuously
     tick 1:
       assert window [0, 8]: always "A" >= 0 on pin OUT red
+```
+
+Exact bag equality assertion:
+
+```
+tests:
+  exact-output:
+    tick 2:
+      assert exactly("A" = 1, "B" = 2) on output of SUM
 ```
 
 Compile behavior
