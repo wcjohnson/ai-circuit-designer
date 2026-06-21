@@ -1,8 +1,8 @@
 // Function:
 // Latches non-zero input values and throttles re-latching for a configurable timeout window.
 // Channels:
-// IN (input): red data to be latched when throttle is inactive. Measured latency: 3 ticks to OUT (A pulse -> A at OUT).
-// TIMEOUT (input): red timeout threshold via signal H; controls throttle duration in ticks (assumed H > 0). Measured timing under active wait is linear in H: TIMEOUT_REACHED O arrives about H+3 ticks and relatch at OUT about H+8 ticks after input change.
+// IN (input): red data to be latched when throttle is inactive. Measured latency: 2 ticks to OUT (A pulse -> A at OUT).
+// TIMEOUT (input): red timeout threshold via signal H; controls throttle duration in ticks (assumed H > 0). Measured timing under active wait is linear in H: TIMEOUT_REACHED O arrives about H+3 ticks and relatch at OUT about H+7 ticks after input change.
 // OUT (output): red latched value held during throttle and eligible to refresh after timeout.
 circuit: throttled-latch
 
@@ -35,12 +35,9 @@ combinators:
   LATCH_CLEAN: arithmetic
     each R + 0 -> each
 
-  OUT_CLEAN: arithmetic
-    each R + 0 -> each
-
   HAS_OUT: decider
     conditions:
-      anything R != 0
+      anything G != 0
     outputs:
       "W" = 1
 
@@ -82,8 +79,7 @@ wires:
     LATCH_HOLD out -> LATCH_HOLD in
     LATCH_HOLD out -> LATCH_CLEAN in
 
-  network LatchStable: red
-    LATCH_CLEAN out -> OUT_CLEAN in
+  network LatchStable: green
     LATCH_CLEAN out -> HAS_OUT in
 
   network LatchReset: green
@@ -96,7 +92,7 @@ wires:
     LATCH_MARK out -> LATCH_MARK in
 
   network PublicOut: red
-    OUT_CLEAN out -> OUT
+    LATCH_CLEAN out -> OUT
 
   network TimeoutConfig: red
     TIMEOUT -> STEP_GATE in
@@ -127,8 +123,8 @@ tests:
     tick 0:
       apply signal "H" = 5 to pin TIMEOUT red continuously
       apply signal "A" = 7 to pin IN red
-      assert window [+0, +2]: always nothing on pin OUT red
-      assert window [+3, +6]: always exactly("A" = 7) on pin OUT red
+      assert window [+0, +1]: always nothing on pin OUT red
+      assert window [+2, +6]: always exactly("A" = 7) on pin OUT red
 
   zero-input-does-not-trigger-throttle:
     tick 0:
@@ -174,7 +170,7 @@ tests:
     tick 24:
       assert: exactly("A" = 5) on pin OUT red
       apply signal "A" = 2 to pin IN red continuously
-      assert window [+0, +2]: always exactly("A" = 5) on pin OUT red
+      assert window [+0, +1]: always exactly("A" = 5) on pin OUT red
       assert window [+4, +18]: sometimes exactly("A" = 2) on pin OUT red
       assert window [+8, +24]: never exactly("A" = 5) on pin OUT red
       assert window [+12, +24]: always exactly("A" = 2) on pin OUT red
@@ -186,14 +182,14 @@ tests:
     tick 3:
       assert: exactly("A" = 6) on pin OUT red
       apply signal "A" = 0 to pin IN red continuously
-      assert window [+0, +9]: always exactly("A" = 6) on pin OUT red
+      assert window [+0, +8]: always exactly("A" = 6) on pin OUT red
       assert window [+10, +16]: sometimes nothing on pin OUT red
     tick 24:
       assert: nothing on pin OUT red
       assert: signal "T" = 0 on network CountState
       assert: signal "O" = 0 on network TimeoutOut
       apply signal "A" = 4 to pin IN red continuously
-      assert window [+0, +2]: always nothing on pin OUT red
+      assert window [+0, +1]: always nothing on pin OUT red
       assert window [+3, +10]: always exactly("A" = 4) on pin OUT red
 
   zero-latch-relatch:
@@ -208,7 +204,7 @@ tests:
     tick 14:
       assert: exactly("A" = 7) on pin OUT red
       apply signal "A" = 2 to pin IN red continuously
-      assert window [+0, +8]: always exactly("A" = 7) on pin OUT red
+      assert window [+0, +7]: always exactly("A" = 7) on pin OUT red
       assert window [+10, +16]: always exactly("A" = 2) on pin OUT red
 
   no-flicker-during-timeout-transition:
@@ -225,10 +221,29 @@ tests:
     tick 24:
       assert: exactly("A" = 5) on pin OUT red
       apply signal "A" = 2 to pin IN red continuously
-      assert window [+0, +2]: always exactly("A" = 5) on pin OUT red
+      assert window [+0, +1]: always exactly("A" = 5) on pin OUT red
       assert window [+4, +18]: sometimes exactly("A" = 2) on pin OUT red
       assert window [+8, +24]: never exactly("A" = 5) on pin OUT red
       assert window [+12, +24]: always exactly("A" = 2) on pin OUT red
+
+  raised-timeout-holds-past-original-then-lowered-timeout-relatches:
+    tick 0:
+      apply signal "H" = 3 to pin TIMEOUT red continuously
+      apply signal "A" = 8 to pin IN red
+    tick 3:
+      assert: exactly("A" = 8) on pin OUT red
+      apply signal "H" = 8 to pin TIMEOUT red continuously
+      apply signal "A" = 5 to pin IN red continuously
+      assert window [+0, +8]: always exactly("A" = 8) on pin OUT red
+    tick 8:
+      apply signal "A" = 2 to pin IN red continuously
+      assert window [+0, +3]: always exactly("A" = 8) on pin OUT red
+    tick 12:
+      assert: exactly("A" = 8) on pin OUT red
+      apply signal "H" = 3 to pin TIMEOUT red continuously
+      assert window [+0, +4]: always exactly("A" = 8) on pin OUT red
+      assert window [+6, +20]: always exactly("A" = 2) on pin OUT red
+      assert window [+6, +20]: never exactly("A" = 8) on pin OUT red
 
   output-pollution-does-not-corrupt-state:
     tick 0:
