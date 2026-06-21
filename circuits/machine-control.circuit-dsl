@@ -29,6 +29,19 @@ combinators:
     outputs:
       "W" = 1
 
+  HAS_NEEDS: decider
+    conditions:
+      anything R != 0
+    outputs:
+      "N" = 1
+
+  WAIT_IF_SHORT_FALLBACK: decider
+    conditions:
+      each R < each G
+      AND "N" G = 0
+    outputs:
+      "W" = 1
+
   TIMER: circuit debounce-timer
 
   TIMEOUT_PREV: arithmetic
@@ -87,13 +100,25 @@ wires:
 
   network AvailMinusNeedsA: red
     AVAIL -> DELTA in
+    AVAIL -> WAIT_IF_SHORT_FALLBACK in
   network AvailMinusNeedsB: green
     NEEDS_CLEAN out -> DELTA in
 
   network WaitCalc: red
     DELTA out -> WAIT_IF_SHORT in
+
+  network NeedsPresence: red
+    NEEDS_CLEAN out -> HAS_NEEDS in
+
+  network CurrentRecipeState: green
+    CURRENT_BUF out -> SWITCH_IF_UNREQUESTED in
+    CURRENT_BUF out -> HAS_CURRENT in
+    CURRENT_BUF out -> WAIT_IF_SHORT_FALLBACK in
+    HAS_NEEDS out -> WAIT_IF_SHORT_FALLBACK in
+
   network TimerIn: red
     WAIT_IF_SHORT out -> TIMER WAIT_IN
+    WAIT_IF_SHORT_FALLBACK out -> TIMER WAIT_IN
   network TimerOut: red
     TIMER OUT -> INC_ON_TIMEOUT in
     TIMER OUT -> TIMEOUT_PREV in
@@ -106,13 +131,6 @@ wires:
   network TimerThreshold: green
     TIMEOUT_CFG -> TIMER TIMEOUT_IN
 
-  network CurrentRecipeRed: red
-    RECIPE_HOLD OUT -> CURRENT_BUF in
-
-  network CurrentRecipeState: green
-    CURRENT_BUF out -> SWITCH_IF_UNREQUESTED in
-    CURRENT_BUF out -> HAS_CURRENT in
-
   network IndexDelta: red
     INC_ON_TIMEOUT out -> ROTATOR STEP
 
@@ -122,6 +140,7 @@ wires:
 
   network SelectedReqDelayed: red
     SELECT_DELAY out -> RECIPE_HOLD DATA_IN
+    SELECT_DELAY out -> CURRENT_BUF in
 
   network SwitchEnable: green
     SWITCH_IF_UNREQUESTED out -> SET_IF_SELECTED in
@@ -155,6 +174,28 @@ tests:
     tick 2:
       assert signal item(iron-plate) = 3 on pin NEEDS red
       assert signal item(copper-plate) = 2 on pin NEEDS red
+
+  m-read-ingredients-do-not-pollute-m-write:
+    tick 0:
+      apply signal item(iron-plate) = 4 to pin M_READ red continuously
+      apply signal item(copper-plate) = 7 to pin M_READ red continuously
+    tick 6:
+      assert signal "A" = 0 on pin M_WRITE red
+      assert signal item(iron-plate) = 0 on pin M_WRITE red
+      assert signal item(copper-plate) = 0 on pin M_WRITE red
+
+  m-write-pollution-does-not-corrupt-current-state:
+    tick 0:
+      apply signal "A" = 12 to pin REQ red continuously
+      apply signal "B" = 8 to pin REQ red continuously
+    tick 10:
+      assert signal "A" = 12 on pin M_WRITE red
+      apply signal item(copper-plate) = 99 to pin M_WRITE red continuously
+    tick 12:
+      assert signal item(copper-plate) = 0 on network CurrentRecipeState
+    tick 30:
+      assert signal "A" = 12 on pin M_WRITE red
+      assert signal "B" = 0 on pin M_WRITE red
 
   switches-when-current-recipe-is-no-longer-requested:
     tick 0:
@@ -194,6 +235,37 @@ tests:
       assert signal "B" = 8 on pin M_WRITE red
     tick 330:
       assert signal "B" = 8 on pin M_WRITE red
+
+  zero-readback-still-timeouts-and-rotates-request:
+    tick 0:
+      apply signal item(iron-plate) = 100 to pin REQ red continuously
+      apply signal item(copper-cable) = 100 to pin REQ red continuously
+      apply signal item(iron-plate) = 0 to pin M_READ red continuously
+      apply signal item(copper-cable) = 0 to pin M_READ red continuously
+      apply signal item(iron-plate) = 0 to pin AVAIL red continuously
+      apply signal item(copper-cable) = 0 to pin AVAIL red continuously
+    tick 100:
+      assert signal item(copper-cable) = 100 on pin M_WRITE red
+      assert signal item(iron-plate) = 0 on pin M_WRITE red
+      assert signal item(copper-cable) = 100 on network CurrentRecipeState
+      assert signal "W" = 1 on network TimerIn
+    tick 325:
+      assert signal item(iron-plate) = 100 on pin M_WRITE red
+      assert signal item(copper-cable) = 0 on pin M_WRITE red
+
+  iron-pole-feedback-shortage-times-out-and-rotates:
+    tick 0:
+      apply signal item(iron-pole) = 100 to pin REQ red continuously
+      apply signal item(copper-cable) = 100 to pin REQ red continuously
+      apply signal item(iron-plate) = 1 to pin M_READ red continuously
+      apply signal item(iron-plate) = 0 to pin AVAIL red continuously
+      apply signal item(copper-cable) = 0 to pin AVAIL red continuously
+    tick 100:
+      assert signal item(copper-cable) = 100 on pin M_WRITE red
+      assert signal item(iron-pole) = 0 on pin M_WRITE red
+    tick 315:
+      assert signal item(iron-pole) = 100 on pin M_WRITE red
+      assert signal item(copper-cable) = 0 on pin M_WRITE red
 
   copper-wire-times-out-then-switches-to-iron-pole:
     tick 0:
