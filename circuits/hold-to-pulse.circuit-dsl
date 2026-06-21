@@ -2,7 +2,7 @@
 // Converts held input signals into one-tick change pulses carrying current input values.
 // Channels:
 // IN (input): red held signal snapshot to watch for changes.
-// OUT (output): red one-tick pulse of current IN values whenever IN changes.
+// OUT (output): red one-tick pulse of current IN values whenever IN changes (measured minimum IN->OUT latency: 3 ticks).
 circuit: hold-to-pulse
 
 combinators:
@@ -44,46 +44,28 @@ wires:
 
 tests:
   idle-has-no-pulse:
-    tick 5:
-      assert signal "A" = 0 on pin OUT red
-      assert signal "B" = 0 on pin OUT red
+    tick 0:
+      assert window [+0, +20]: always nothing on pin OUT red
 
   held-signal-emits-single-pulse:
     tick 0:
       apply signal "A" = 7 to pin IN red continuously
-    tick 2:
-      assert signal "A" = 0 on pin OUT red
-    tick 3:
-      assert signal "A" = 7 on pin OUT red
-    tick 4:
-      assert signal "A" = 0 on pin OUT red
-    tick 10:
-      assert signal "A" = 0 on pin OUT red
+      assert window [+0, +2]: always nothing on pin OUT red
+      assert at +3: always exactly("A" = 7) on pin OUT red
+      assert window [+4, +12]: always nothing on pin OUT red
 
   change-emits-current-values-once:
     tick 0:
       apply signal "A" = 7 to pin IN red continuously
       apply signal "B" = 2 to pin IN red continuously
-    tick 2:
-      assert signal "A" = 0 on pin OUT red
-      assert signal "B" = 0 on pin OUT red
-    tick 3:
-      assert signal "A" = 7 on pin OUT red
-      assert signal "B" = 2 on pin OUT red
-    tick 4:
-      assert signal "A" = 0 on pin OUT red
-      assert signal "B" = 0 on pin OUT red
+      assert window [+0, +2]: always nothing on pin OUT red
+      assert at +3: always exactly("A" = 7, "B" = 2) on pin OUT red
+      assert window [+4, +5]: always nothing on pin OUT red
     tick 6:
       apply signal "A" = 11 to pin IN red continuously
-    tick 8:
-      assert signal "A" = 0 on pin OUT red
-      assert signal "B" = 0 on pin OUT red
-    tick 9:
-      assert signal "A" = 11 on pin OUT red
-      assert signal "B" = 2 on pin OUT red
-    tick 10:
-      assert signal "A" = 0 on pin OUT red
-      assert signal "B" = 0 on pin OUT red
+      assert window [+0, +2]: always nothing on pin OUT red
+      assert at +3: always exactly("A" = 11, "B" = 2) on pin OUT red
+      assert window [+4, +8]: always nothing on pin OUT red
 
   removing-one-signal-pulses-latest-snapshot:
     tick 0:
@@ -91,23 +73,17 @@ tests:
       apply signal "B" = 4 to pin IN red continuously
     tick 6:
       apply signal "A" = 0 to pin IN red continuously
-    tick 8:
-      assert signal "A" = 0 on pin OUT red
-      assert signal "B" = 0 on pin OUT red
-    tick 9:
-      assert signal "A" = 0 on pin OUT red
-      assert signal "B" = 4 on pin OUT red
-    tick 10:
-      assert signal "A" = 0 on pin OUT red
-      assert signal "B" = 0 on pin OUT red
+      assert window [+0, +2]: always nothing on pin OUT red
+      assert at +3: always exactly("B" = 4) on pin OUT red
+      assert window [+4, +8]: always nothing on pin OUT red
 
   output-pollution-does-not-corrupt-state:
     tick 0:
       apply signal "Z" = 123 to pin OUT red continuously
-    tick 5:
-      assert signal "Z" = 0 on network PrevState
+      assert window [+0, +20]: always "Z" = 0 on network PrevState
     tick 6:
       apply signal "A" = 9 to pin IN red continuously
-    tick 8:
-      assert signal "A" = 9 on network PrevState
-      assert signal "Z" = 0 on network PrevState
+      assert window [+0, +3]: sometimes "A" = 9 on network PrevState
+      assert window [+0, +8]: always "Z" = 0 on network PrevState
+      assert window [+0, +2]: always signal "A" = 0 on pin OUT red
+      assert at +3: always signal "A" = 9 on pin OUT red
