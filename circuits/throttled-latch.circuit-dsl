@@ -5,14 +5,44 @@
 // TIMEOUT (input): red timeout threshold via signal H; controls throttle duration in ticks (assumed H > 0). Measured control latency: 7 ticks to TIMEOUT_REACHED (H step -> O=1 under active wait).
 // OUT (output): red latched value held during throttle and eligible to refresh after timeout.
 circuit: throttled-latch
-  imports: r-latch
 
 combinators:
   IN: io medium-electric-pole
   TIMEOUT: io medium-electric-pole
   OUT: io medium-electric-pole
 
-  LATCH: circuit r-latch
+  LATCH_CAPTURE: decider
+    conditions:
+      "L" G = 0
+      AND anything R != 0
+    outputs:
+      every = input R
+
+  LATCH_HOLD: decider
+    conditions:
+      "L" G != 0
+      AND anything R != 0
+    outputs:
+      every = input R
+
+  LATCH_MARK_SET: decider
+    conditions:
+      "R" G = 0
+      AND "L" G = 0
+      AND anything R != 0
+    outputs:
+      "L" = 1
+
+  LATCH_MARK_HOLD: decider
+    conditions:
+      "R" G = 0
+      AND "L" G != 0
+    outputs:
+      "L" = 1
+
+  LATCH_CLEAN: arithmetic
+    each R + 0 -> each
+
   OUT_CLEAN: arithmetic
     each R + 0 -> each
 
@@ -60,11 +90,30 @@ combinators:
 
 wires:
   network InputData: red
-    IN -> LATCH SIG_IN
+    IN -> LATCH_CAPTURE in
+    IN -> LATCH_MARK_SET in
 
   network LatchOut: red
-    LATCH OUT -> OUT_CLEAN in
-    LATCH OUT -> HAS_OUT in
+    LATCH_CAPTURE out -> LATCH_HOLD in
+    LATCH_CAPTURE out -> LATCH_CLEAN in
+    LATCH_HOLD out -> LATCH_HOLD in
+    LATCH_HOLD out -> LATCH_CLEAN in
+
+  network LatchStable: red
+    LATCH_CLEAN out -> OUT_CLEAN in
+    LATCH_CLEAN out -> HAS_OUT in
+
+  network LatchReset: green
+    RESET_ON_TIMEOUT out -> LATCH_CAPTURE in
+    RESET_ON_TIMEOUT out -> LATCH_HOLD in
+    RESET_ON_TIMEOUT out -> LATCH_MARK_SET in
+    RESET_ON_TIMEOUT out -> LATCH_MARK_HOLD in
+
+  network LatchLock: green
+    LATCH_MARK_SET out -> LATCH_CAPTURE in
+    LATCH_MARK_SET out -> LATCH_MARK_HOLD in
+    LATCH_MARK_HOLD out -> LATCH_CAPTURE in
+    LATCH_MARK_HOLD out -> LATCH_MARK_HOLD in
 
   network PublicOut: red
     OUT_CLEAN out -> OUT
@@ -100,7 +149,6 @@ wires:
 
   network TimeoutReset: green
     RESET_ON_TIMEOUT out -> WAIT_GATE in
-    RESET_ON_TIMEOUT out -> LATCH RESET_IN
 
 tests:
   captures-nonzero-when-empty:
@@ -154,7 +202,7 @@ tests:
     tick 30:
       assert signal "A" = 5 on pin OUT red
     tick 35:
-      assert signal "A" = 0 on pin OUT red
+      assert signal "A" = 2 on pin OUT red
     tick 45:
       assert signal "A" = 2 on pin OUT red
 
@@ -190,6 +238,25 @@ tests:
     tick 24:
       assert signal "A" = 7 on pin OUT red
     tick 34:
+      assert signal "A" = 2 on pin OUT red
+
+  no-flicker-during-timeout-transition:
+    tick 0:
+      apply signal "H" = 3 to pin TIMEOUT red continuously
+      apply signal "A" = 8 to pin IN red
+    tick 3:
+      assert signal "A" = 8 on pin OUT red
+      apply signal "A" = 5 to pin IN red continuously
+    tick 24:
+      assert signal "A" = 5 on pin OUT red
+      apply signal "A" = 2 to pin IN red continuously
+    tick 30:
+      assert signal "A" = 5 on pin OUT red
+    tick 34:
+      assert signal "A" = 2 on pin OUT red
+    tick 35:
+      assert signal "A" = 2 on pin OUT red
+    tick 45:
       assert signal "A" = 2 on pin OUT red
 
   output-pollution-does-not-corrupt-state:
