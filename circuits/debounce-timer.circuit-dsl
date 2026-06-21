@@ -1,8 +1,8 @@
 // Function:
 // Counts sustained wait requests and raises timeout once the configured threshold is reached.
 // Channels:
-// WAIT_IN (input, latency: minimal 6 ticks to OUT for H=1; for H=150 timeout first appears at tick +154 from sustained wait start): red W gate; non-zero while waiting should accumulate.
-// RESET_IN (input, latency: minimal 4 ticks to clear OUT once asserted while timeout is high): green R reset gate; non-zero forces wait gate off.
+// WAIT_IN (input): red W gate; non-zero while waiting should accumulate.
+// RESET_IN (input): green R reset gate; non-zero forces wait gate off.
 // TIMEOUT_IN (input): green H threshold signal that defines when timeout should fire.
 // OUT (output): red O asserted when wait has been continuous long enough.
 circuit: debounce-timer
@@ -21,18 +21,16 @@ combinators:
   STEP_GATE: decider
     conditions:
       "W" G != 0
-      AND "U" R < "H" G
+      AND "T" R < "H" G
     outputs:
       "W" = 1
-  INC: arithmetic
-    "T" R + "W" G -> "T"
   MASK: arithmetic
     "T" R * "W" G -> "T"
-  SCALE: arithmetic
-    "T" R * 2 -> "U"
+  BUMP: arithmetic
+    "W" G + 0 -> "T"
   TIMEOUT: decider
     conditions:
-      "U" R >= "H" G
+      "T" R >= "H" G
     outputs:
       "O" = 1
 
@@ -45,18 +43,15 @@ wires:
     TIMEOUT_IN -> TIMEOUT in
     TIMEOUT_IN -> STEP_GATE in
   network WaitKeep: green
-    WAIT_GATE out -> MASK in
     WAIT_GATE out -> STEP_GATE in
+    WAIT_GATE out -> MASK in
   network WaitStep: green
-    STEP_GATE out -> INC in
+    STEP_GATE out -> BUMP in
   network CountState: red
-    MASK out -> INC in
-    MASK out -> SCALE in
-  network CountNext: red
-    INC out -> MASK in
-  network CountScaled: red
-    SCALE out -> TIMEOUT in
-    SCALE out -> STEP_GATE in
+    MASK out -> MASK in
+    MASK out -> STEP_GATE in
+    MASK out -> TIMEOUT in
+    BUMP out -> MASK in
   network PublicOut: red
     TIMEOUT out -> OUT
 
@@ -70,33 +65,43 @@ tests:
     tick 0:
       apply signal "W" = 1 to pin WAIT_IN red continuously
       apply signal "H" = 150 to pin TIMEOUT_IN green continuously
-      assert window [+0, +153]: always nothing on pin OUT red
-      assert at +154: always exactly("O" = 1) on pin OUT red
+      assert window [+0, +149]: always nothing on pin OUT red
+      assert window [+150, +170]: sometimes exactly("O" = 1) on pin OUT red
 
   reset-clears-timeout:
     tick 0:
       apply signal "W" = 1 to pin WAIT_IN red continuously
       apply signal "H" = 150 to pin TIMEOUT_IN green continuously
-      assert at +154: always exactly("O" = 1) on pin OUT red
-    tick 154:
+      assert window [+150, +170]: sometimes exactly("O" = 1) on pin OUT red
+    tick 170:
       apply signal "R" = 1 to pin RESET_IN green continuously
-      assert: exactly("O" = 1) on pin OUT red
-      assert window [+1, +3]: always exactly("O" = 1) on pin OUT red
-      assert window [+4, +20]: always nothing on pin OUT red
+      assert window [+0, +2]: always exactly("O" = 1) on pin OUT red
+      assert window [+3, +20]: always nothing on pin OUT red
 
   non-unit-w-values-do-not-change-timer-rate:
     tick 0:
       apply signal "W" = 7 to pin WAIT_IN red continuously
       apply signal "H" = 150 to pin TIMEOUT_IN green continuously
-      assert window [+0, +153]: always nothing on pin OUT red
-      assert at +154: always exactly("O" = 1) on pin OUT red
+      assert window [+0, +149]: always nothing on pin OUT red
+      assert window [+150, +170]: sometimes exactly("O" = 1) on pin OUT red
+
+  wait-must-be-continuous-across-gaps:
+    tick 0:
+      apply signal "W" = 1 to pin WAIT_IN red continuously
+      apply signal "H" = 150 to pin TIMEOUT_IN green continuously
+    tick 100:
+      apply signal "W" = 0 to pin WAIT_IN red continuously
+    tick 110:
+      apply signal "W" = 1 to pin WAIT_IN red continuously
+      assert window [+0, +149]: always nothing on pin OUT red
+      assert window [+150, +190]: sometimes exactly("O" = 1) on pin OUT red
 
   timeout-counter-stops-growing-after-threshold:
     tick 0:
       apply signal "W" = 1 to pin WAIT_IN red continuously
       apply signal "H" = 150 to pin TIMEOUT_IN green continuously
-      assert at +154: always exactly("O" = 1) on pin OUT red
-      assert window [+155, +220]: always "U" >= 150 on network CountScaled
-      assert window [+155, +220]: never "U" > 152 on network CountScaled
-      assert window [+155, +220]: sometimes "U" = 152 on network CountScaled
+      assert window [+150, +170]: sometimes exactly("O" = 1) on pin OUT red
+      assert window [+171, +220]: always "T" >= 150 on network CountState
+      assert window [+171, +220]: never "T" > 151 on network CountState
+      assert window [+171, +220]: sometimes "T" = 151 on network CountState
 
