@@ -61,6 +61,8 @@ Assumption policy:
 - Add a top-of-file `//` multi-line comment block with agent-friendly channel semantics for every interface combinator.
 - For interface combinators, describe each channel by ID and role in one compact sentence, for example:
   - `// Channels: SIG_IN (input): ...; RESET_IN (input): ...; OUT (output): ...`
+- Measure per-input-pin latency (ticks from input application to intended output effect) using DSL tests or probe runs, and record those latency values in the `Channels:` comment.
+- Keep the `Channels:` latency information updated whenever circuit logic changes.
 - Include `imports:` only when one or more imported subcircuits are actually used; otherwise omit `imports:`.
 
 2. Choose combinator strategy.
@@ -116,6 +118,10 @@ Assumption policy:
   - `node dist/src/cli.js probe-dsl --dsl <path> --ticks <n>`
   - Add `--inputs <path>` when targeted external input injection is needed.
   - Add `--include-blueprint` when you need to inspect compiled entity/wire output while reasoning.
+- Use the CLI `measure-latency` command for channel latency measurement and updates in `Channels:` comments:
+  - `node dist/src/cli.js measure-latency --dsl <path> --input-pin <id> --input-wire <red|green> --output-pin <id> --output-wire <red|green> --input-signal-key <signal-key> --watch-signal-key <signal-key> --value <n> --tick <t> --ticks <n>`
+  - Use `--pulse` for one-tick stimuli and `--baseline-inputs <path>` for required gating/default inputs.
+  - Use `--expected <n>` when latency should be measured to a specific output value rather than first change.
 - Use `node dist/src/cli.js simulate-dsl ... --pretty` only when expanded human-readable output is needed.
 
 9. Persist artifacts with canonical paths.

@@ -1,8 +1,8 @@
 // Function:
 // Maintains a round-robin index over requested recipes and outputs the current selected recipe.
 // Channels:
-// REQ (input): red requested recipes by signal and count.
-// STEP (input): red pulse on D to advance round-robin index.
+// REQ (input, latency: 1 tick to SELECTED): red requested recipes by signal and count.
+// STEP (input, latency: 4 ticks pulse-to-effect on SELECTED): red pulse on D to advance round-robin index.
 // SELECTED (output): red currently selected request at selector output timing.
 circuit: request-rotator
 

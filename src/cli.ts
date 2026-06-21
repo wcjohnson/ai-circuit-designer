@@ -22,7 +22,7 @@ type CompactedTickFrame =
   | { kind: 'tick'; tick: TickOutput }
   | { kind: 'identical'; tick: number; throughTick: number };
 
-type Command = 'simulate' | 'simulate-dsl' | 'compile' | 'test' | 'dump' | 'probe-dsl' | 'emit-dsl';
+type Command = 'simulate' | 'simulate-dsl' | 'compile' | 'test' | 'dump' | 'probe-dsl' | 'emit-dsl' | 'measure-latency';
 
 interface AgentTickNetwork {
   id: string;
@@ -101,7 +101,25 @@ interface EmitDslOptions extends BaseCliOptions {
   outputBlueprintStringPath?: string;
 }
 
-type CliOptions = SimulateOptions | SimulateDslOptions | CompileOptions | TestOptions | DumpOptions | ProbeDslOptions | EmitDslOptions;
+interface MeasureLatencyOptions extends BaseCliOptions {
+  command: 'measure-latency';
+  dslPath?: string;
+  baselineInputsPath?: string;
+  inputPinId?: string;
+  inputWire: 'red' | 'green';
+  outputPinId?: string;
+  outputWire: 'red' | 'green';
+  inputSignalKey: string;
+  watchSignalKey: string;
+  value: number;
+  expectedValue?: number;
+  applyTick: number;
+  ticks: number;
+  continuous: boolean;
+  includeTrace: boolean;
+}
+
+type CliOptions = SimulateOptions | SimulateDslOptions | CompileOptions | TestOptions | DumpOptions | ProbeDslOptions | EmitDslOptions | MeasureLatencyOptions;
 
 try {
   const options = parseArgs(process.argv.slice(2));
@@ -188,6 +206,123 @@ try {
     process.exit(0);
   }
 
+  if (options.command === 'measure-latency') {
+    const dslSource = await readDslSource(options.dslPath);
+    const compiled = compileDsl(dslSource, {
+      sourcePath: options.dslPath
+    });
+
+    const baselineInputs = options.baselineInputsPath
+      ? JSON.parse(await readFile(options.baselineInputsPath, 'utf8')) as ExternalInput[]
+      : [];
+
+    if (!options.inputPinId) {
+      throw new Error('--input-pin is required.');
+    }
+    if (!options.outputPinId) {
+      throw new Error('--output-pin is required.');
+    }
+
+    const inputEntityId = compiled.entities[options.inputPinId];
+    if (!inputEntityId) {
+      throw new Error(`Unknown input pin '${options.inputPinId}'.`);
+    }
+    const outputEntityId = compiled.entities[options.outputPinId];
+    if (!outputEntityId) {
+      throw new Error(`Unknown output pin '${options.outputPinId}'.`);
+    }
+
+    const stimulusInputs: ExternalInput[] = [];
+    if (options.continuous) {
+      for (let tick = options.applyTick; tick < options.ticks; tick += 1) {
+        stimulusInputs.push({
+          tick,
+          entityId: inputEntityId,
+          connectorId: 1,
+          wire: options.inputWire,
+          signals: { [options.inputSignalKey]: options.value }
+        });
+      }
+    } else {
+      stimulusInputs.push({
+        tick: options.applyTick,
+        entityId: inputEntityId,
+        connectorId: 1,
+        wire: options.inputWire,
+        signals: { [options.inputSignalKey]: options.value }
+      });
+    }
+
+    const baselineSimulation = simulateBlueprint(compiled.blueprint, {
+      ticks: options.ticks,
+      inputs: baselineInputs
+    });
+
+    const measuredSimulation = simulateBlueprint(compiled.blueprint, {
+      ticks: options.ticks,
+      inputs: [...baselineInputs, ...stimulusInputs]
+    });
+
+    const trace: Array<{ tick: number; baseline: number; measured: number; delta: number }> = [];
+    let effectTick: number | null = null;
+    let observedValue: number | null = null;
+
+    for (let tick = options.applyTick; tick < options.ticks; tick += 1) {
+      const baselineTick = baselineSimulation.ticks[tick];
+      const measuredTick = measuredSimulation.ticks[tick];
+      if (!baselineTick || !measuredTick) {
+        continue;
+      }
+
+      const baselineValue = readSignalAtPin(baselineTick, outputEntityId, 1, options.outputWire, options.watchSignalKey);
+      const measuredValue = readSignalAtPin(measuredTick, outputEntityId, 1, options.outputWire, options.watchSignalKey);
+      const delta = measuredValue - baselineValue;
+
+      if (options.includeTrace) {
+        trace.push({ tick, baseline: baselineValue, measured: measuredValue, delta });
+      }
+
+      const triggered = options.expectedValue !== undefined
+        ? measuredValue === options.expectedValue
+        : measuredValue !== baselineValue;
+
+      if (triggered) {
+        effectTick = tick;
+        observedValue = measuredValue;
+        break;
+      }
+    }
+
+    const result: Record<string, unknown> = {
+      dslPath: options.dslPath,
+      inputPin: options.inputPinId,
+      inputWire: options.inputWire,
+      outputPin: options.outputPinId,
+      outputWire: options.outputWire,
+      inputSignalKey: options.inputSignalKey,
+      watchSignalKey: options.watchSignalKey,
+      appliedValue: options.value,
+      applyTick: options.applyTick,
+      ticks: options.ticks,
+      continuous: options.continuous,
+      expectedValue: options.expectedValue,
+      effectTick,
+      latencyTicks: effectTick === null ? null : effectTick - options.applyTick,
+      observedValue
+    };
+
+    if (options.includeTrace) {
+      result.trace = trace;
+    }
+
+    if (options.json) {
+      printJson(result, options.pretty);
+    } else {
+      process.stdout.write(`latencyTicks=${String(result.latencyTicks)} effectTick=${String(effectTick)} observedValue=${String(observedValue)}\n`);
+    }
+    process.exit(0);
+  }
+
   const dslSource = await readDslSource(options.dslPath);
   if (options.command === 'compile' || options.command === 'emit-dsl') {
     const defaultOutputPaths = getDefaultCompileOutputPaths(options.dslPath);
@@ -235,7 +370,7 @@ try {
 }
 
 function parseArgs(args: string[]): CliOptions {
-  const knownCommands: Command[] = ['simulate', 'simulate-dsl', 'compile', 'test', 'dump', 'probe-dsl', 'emit-dsl'];
+  const knownCommands: Command[] = ['simulate', 'simulate-dsl', 'compile', 'test', 'dump', 'probe-dsl', 'emit-dsl', 'measure-latency'];
   const commandIndex = args.findIndex((arg) => knownCommands.includes(arg.toLowerCase() as Command));
   const command = (commandIndex >= 0 ? args[commandIndex].toLowerCase() : 'simulate') as Command;
   const commandArgs = commandIndex >= 0
@@ -256,6 +391,9 @@ function parseArgs(args: string[]): CliOptions {
   }
   if (command === 'emit-dsl') {
     return parseEmitDslArgs(commandArgs);
+  }
+  if (command === 'measure-latency') {
+    return parseMeasureLatencyArgs(commandArgs);
   }
   if (command === 'dump') {
     return parseDumpArgs(commandArgs);
@@ -606,6 +744,124 @@ function parseEmitDslArgs(args: string[]): EmitDslOptions {
   return finalizeAgentOptions(options);
 }
 
+function parseMeasureLatencyArgs(args: string[]): MeasureLatencyOptions {
+  const options: MeasureLatencyOptions = {
+    command: 'measure-latency',
+    json: false,
+    pretty: false,
+    help: false,
+    agent: true,
+    inputWire: 'red',
+    outputWire: 'red',
+    inputSignalKey: 'signal-A',
+    watchSignalKey: 'signal-A',
+    value: 1,
+    applyTick: 0,
+    ticks: 30,
+    continuous: true,
+    includeTrace: false
+  };
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    switch (arg) {
+      case '--dsl':
+      case '-d':
+        options.dslPath = readValue(args, ++index, arg);
+        break;
+      case '--baseline-inputs':
+        options.baselineInputsPath = readValue(args, ++index, arg);
+        break;
+      case '--input-pin':
+        options.inputPinId = readValue(args, ++index, arg);
+        break;
+      case '--input-wire': {
+        const value = readValue(args, ++index, arg).toLowerCase();
+        if (value !== 'red' && value !== 'green') {
+          throw new Error('--input-wire must be red or green.');
+        }
+        options.inputWire = value;
+        break;
+      }
+      case '--output-pin':
+        options.outputPinId = readValue(args, ++index, arg);
+        break;
+      case '--output-wire': {
+        const value = readValue(args, ++index, arg).toLowerCase();
+        if (value !== 'red' && value !== 'green') {
+          throw new Error('--output-wire must be red or green.');
+        }
+        options.outputWire = value;
+        break;
+      }
+      case '--signal-key':
+      case '--signal': {
+        const signalKey = readValue(args, ++index, arg);
+        options.inputSignalKey = signalKey;
+        options.watchSignalKey = signalKey;
+        break;
+      }
+      case '--input-signal-key':
+        options.inputSignalKey = readValue(args, ++index, arg);
+        break;
+      case '--watch-signal-key':
+        options.watchSignalKey = readValue(args, ++index, arg);
+        break;
+      case '--value':
+        options.value = Number(readValue(args, ++index, arg));
+        if (!Number.isFinite(options.value)) {
+          throw new Error('--value must be a number.');
+        }
+        break;
+      case '--expected':
+        options.expectedValue = Number(readValue(args, ++index, arg));
+        if (!Number.isFinite(options.expectedValue)) {
+          throw new Error('--expected must be a number.');
+        }
+        break;
+      case '--tick':
+        options.applyTick = Number(readValue(args, ++index, arg));
+        if (!Number.isInteger(options.applyTick) || options.applyTick < 0) {
+          throw new Error('--tick must be a non-negative integer.');
+        }
+        break;
+      case '--ticks':
+      case '-t':
+        options.ticks = Number(readValue(args, ++index, arg));
+        if (!Number.isInteger(options.ticks) || options.ticks < 1) {
+          throw new Error('--ticks must be a positive integer.');
+        }
+        break;
+      case '--pulse':
+        options.continuous = false;
+        break;
+      case '--continuous':
+        options.continuous = true;
+        break;
+      case '--include-trace':
+        options.includeTrace = true;
+        break;
+      case '--json':
+        options.json = true;
+        break;
+      case '--pretty':
+        options.pretty = true;
+        break;
+      case '--agent':
+        options.agent = true;
+        break;
+      case '--help':
+      case '-h':
+        options.help = true;
+        break;
+      default:
+        throw new Error(`Unknown argument '${arg}'.`);
+    }
+  }
+
+  return finalizeAgentOptions(options);
+}
+
 function finalizeAgentOptions<T extends BaseCliOptions>(options: T): T {
   if (options.agent) {
     options.json = true;
@@ -676,6 +932,7 @@ function printHelp(): void {
       '  simulate       Simulate a Factorio blueprint (default command).',
       '  simulate-dsl   Compile DSL and simulate in one step (agent-friendly).',
       '  probe-dsl      Agent-focused DSL probe (compact JSON by default).',
+      '  measure-latency Measure pin-to-pin DSL latency (agent-friendly).',
       '  compile        Compile DSL into blueprint JSON (+ optional tests metadata).',
       '  emit-dsl       Agent-focused DSL compile/emission (compact JSON by default).',
       '  test           Compile DSL and execute DSL tests.',
@@ -698,6 +955,24 @@ function printHelp(): void {
       '      --inputs <path>       Read external input signals JSON',
       '  -t, --ticks <count>       Number of ticks to simulate (default 3)',
       '      --include-blueprint   Include compiled blueprint string in output',
+      '',
+      'measure-latency options:',
+      '  -d, --dsl <path>          Read DSL source file (or stdin when omitted)',
+      '      --input-pin <id>      Input pin combinator ID to stimulate (required)',
+      '      --input-wire <color>  Input wire color red|green (default red)',
+      '      --output-pin <id>     Output pin combinator ID to observe (required)',
+      '      --output-wire <color> Output wire color red|green (default red)',
+      '      --signal-key <key>    Shorthand: set both input and watch signal keys',
+      '      --input-signal-key    Simulator signal key to inject on input pin (default signal-A)',
+      '      --watch-signal-key    Simulator signal key to watch at output pin (default signal-A)',
+      '      --value <n>           Injected signal value (default 1)',
+      '      --expected <n>        Consider latency reached when measured value equals this value',
+      '      --tick <n>            Tick where stimulus begins (default 0)',
+      '  -t, --ticks <count>       Number of ticks to simulate (default 30)',
+      '      --baseline-inputs     Read baseline external inputs JSON',
+      '      --pulse               Apply stimulus for one tick only',
+      '      --continuous          Apply stimulus continuously from --tick (default)',
+      '      --include-trace       Include per-tick baseline/measured values in JSON output',
       '',
       'compile options:',
       '  -d, --dsl <path>             Read DSL source file (or stdin when omitted)',
@@ -727,6 +1002,20 @@ function printHelp(): void {
       '  -h, --help             Show this help'
     ].join('\n')
   );
+}
+
+function readSignalAtPin(
+  tick: TickOutput,
+  entityId: number,
+  connectorId: number,
+  wire: 'red' | 'green',
+  signalKey: string
+): number {
+  const network = tick.networks.find((candidate) => (
+    candidate.wire === wire
+    && candidate.points.some((point) => point.entityId === entityId && point.connectorId === connectorId)
+  ));
+  return network?.signals?.[signalKey] ?? 0;
 }
 
 function getDefaultCompileOutputPaths(dslPath: string | undefined): { jsonPath: string; stringPath: string } | undefined {

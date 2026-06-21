@@ -1,8 +1,8 @@
 // Function:
 // Latches red data while set is high and holds the last latched value while set is low.
 // Channels:
-// DATA_IN (input): red data bus sampled only while set is active.
-// SET_IN (input): green control where non-zero S enables capture and zero enables hold.
+// DATA_IN (input, latency: 2 ticks to OUT while SET_IN is high): red data bus sampled only while set is active.
+// SET_IN (input, latency: 2 ticks to OUT when opening capture with DATA_IN present): green control where non-zero S enables capture and zero enables hold.
 // OUT (output): public red latched data via an isolation buffer.
 circuit: s-latch
 
