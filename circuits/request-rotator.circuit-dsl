@@ -86,3 +86,18 @@ tests:
     tick 12:
       assert signal "I" = 1 on network IndexToSelect
       assert signal "B" = 8 on pin SELECTED red
+
+  second-step-wraps-back-to-first-request:
+    tick 0:
+      apply signal "A" = 12 to pin REQ red continuously
+      apply signal "B" = 8 to pin REQ red continuously
+    tick 7:
+      apply signal "D" = 1 to pin STEP red
+    tick 10:
+      assert signal "B" = 8 on pin SELECTED red
+    tick 20:
+      apply signal "D" = 1 to pin STEP red
+    tick 24:
+      assert signal "A" = 12 on pin SELECTED red
+      assert signal "B" = 0 on pin SELECTED red
+

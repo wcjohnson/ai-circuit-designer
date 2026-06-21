@@ -285,3 +285,32 @@ tests:
       assert signal item(iron-pole) = 50 on pin M_WRITE red
       assert signal item(copper-wire) = 0 on pin M_WRITE red
 
+  rotates-back-after-second-timeout-window:
+    tick 0:
+      apply signal item(copper-wire) = 100 to pin REQ red continuously
+      apply signal item(iron-pole) = 50 to pin REQ red continuously
+      apply signal item(copper-plate) = 2 to pin M_READ red continuously
+      apply signal item(copper-plate) = 0 to pin AVAIL red continuously
+      apply signal item(iron-plate) = 20 to pin AVAIL red continuously
+    tick 315:
+      assert signal item(iron-pole) = 50 on pin M_WRITE red
+      assert signal item(copper-wire) = 0 on pin M_WRITE red
+      apply signal item(copper-plate) = 0 to pin M_READ red continuously
+      apply signal item(iron-plate) = 2 to pin M_READ red continuously
+      apply signal item(iron-plate) = 0 to pin AVAIL red continuously
+      apply signal item(copper-plate) = 20 to pin AVAIL red continuously
+    tick 640:
+      assert signal item(copper-wire) = 100 on network SelectedReq
+      assert signal item(iron-pole) = 0 on network SelectedReq
+      assert signal "O" = 0 on network TimerOut
+      assert signal item(copper-wire) = 100 on pin M_WRITE red
+      assert signal item(iron-pole) = 0 on pin M_WRITE red
+    tick 900:
+      assert signal "W" = 1 on network TimerIn
+      assert signal "O" = 1 on network TimerOut
+      assert signal "D" = 1 on network IndexDelta
+      assert signal item(copper-wire) = 100 on network SelectedReq
+      assert signal item(iron-pole) = 0 on network SelectedReq
+      assert signal item(copper-wire) = 100 on pin M_WRITE red
+      assert signal item(iron-pole) = 0 on pin M_WRITE red
+
