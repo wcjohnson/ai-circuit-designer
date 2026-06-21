@@ -1084,7 +1084,8 @@ function computeBlueprintLayout(
 function buildEntity(combinator: ParsedCombinator, entityNumber: number, position: { x: number; y: number }) {
   const base = {
     entity_number: entityNumber,
-    position
+    position,
+    player_description: combinator.id
   };
 
   if (combinator.kind === 'constant') {

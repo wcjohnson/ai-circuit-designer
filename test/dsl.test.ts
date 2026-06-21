@@ -466,6 +466,42 @@ wires:
   }
 });
 
+test('compileDsl sets player_description to DSL combinator id', () => {
+  const source = `
+combinators:
+  IN: io medium-electric-pole
+  OUT: io medium-electric-pole
+  C1: constant
+    "A" = 1
+  A1: arithmetic
+    "A" R + 1 -> "A"
+  D1: decider
+    conditions:
+      "A" R > 0
+    outputs:
+      "A" = input R
+  S1: selector
+    operation: count
+    count_signal: C
+
+wires:
+  network N1: red
+    IN -> A1 in
+    A1 out -> D1 in
+    D1 out -> S1 in
+    S1 out -> OUT
+`;
+
+  const compiled = compileDsl(source);
+  const entityNumberById = new Map(Object.entries(compiled.entities).map(([id, number]) => [id, Number(number)]));
+
+  for (const [id, entityNumber] of entityNumberById) {
+    const entity = compiled.blueprint.entities.find((candidate) => candidate.entity_number === entityNumber);
+    assert.ok(entity, `Expected compiled entity for combinator '${id}'.`);
+    assert.equal((entity as { player_description?: string }).player_description, id);
+  }
+});
+
 test('compileDsl warns when circuit cannot fit in 9x9 grid', () => {
   const arithmeticLines = Array.from({ length: 29 }, (_, index) => {
     const id = `A${index + 1}`;
