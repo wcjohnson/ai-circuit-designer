@@ -2,10 +2,10 @@
 // Latches non-zero input values and throttles re-latching for a configurable timeout window.
 // Channels:
 // IN (input): red data to be latched when throttle is inactive. Measured latency: 3 ticks to OUT (A pulse -> A at OUT).
-// TIMEOUT (input): red timeout threshold via signal H; controls throttle duration in ticks. Measured control latency: 1 tick to TIMER::OUT (H step -> O=1 under active wait).
+// TIMEOUT (input): red timeout threshold via signal H; controls throttle duration in ticks (assumed H > 0). Measured control latency: 7 ticks to TIMEOUT_REACHED (H step -> O=1 under active wait).
 // OUT (output): red latched value held during throttle and eligible to refresh after timeout.
 circuit: throttled-latch
-  imports: r-latch debounce-timer hold-to-pulse
+  imports: r-latch
 
 combinators:
   IN: io medium-electric-pole
@@ -22,29 +22,39 @@ combinators:
     outputs:
       "W" = 1
 
-  TIMEOUT_H: arithmetic
-    "H" R + 0 -> "H"
-
-  HAS_TIMEOUT: decider
-    conditions:
-      "H" G > 0
-    outputs:
-      "E" = 1
-
-  WAIT_EN: decider
+  WAIT_GATE: decider
     conditions:
       "W" R != 0
-      AND "E" G != 0
+      AND "R" G = 0
     outputs:
       "W" = 1
 
-  TIMER: circuit debounce-timer
-  TIMEOUT_EDGE: circuit hold-to-pulse
+  STEP_GATE: decider
+    conditions:
+      "W" G != 0
+      AND "T" R < "H" R
+    outputs:
+      "W" = 1
+
+  INC: arithmetic
+    "T" R + "W" G -> "T"
+
+  MASK: arithmetic
+    "T" R * "W" G -> "T"
+
+  TIMEOUT_REACHED: decider
+    conditions:
+      "T" R >= "H" R
+    outputs:
+      "O" = 1
+
+  TIMEOUT_PREV: arithmetic
+    "O" R + 0 -> "P"
 
   RESET_ON_TIMEOUT: decider
     conditions:
       "O" R != 0
-      AND "E" G != 0
+      AND "P" G = 0
     outputs:
       "R" = 1
 
@@ -59,28 +69,37 @@ wires:
   network PublicOut: red
     OUT_CLEAN out -> OUT
 
-  network TimeoutConfigIn: red
-    TIMEOUT -> TIMEOUT_H in
-  network TimeoutConfig: green
-    TIMEOUT_H out -> TIMER TIMEOUT_IN
-    TIMEOUT_H out -> HAS_TIMEOUT in
+  network TimeoutConfig: red
+    TIMEOUT -> STEP_GATE in
+    TIMEOUT -> TIMEOUT_REACHED in
 
   network WaitSignals: red
-    HAS_OUT out -> WAIT_EN in
-  network WaitEnable: green
-    HAS_TIMEOUT out -> WAIT_EN in
-    HAS_TIMEOUT out -> RESET_ON_TIMEOUT in
+    HAS_OUT out -> WAIT_GATE in
 
-  network TimerWait: red
-    WAIT_EN out -> TIMER WAIT_IN
+  network WaitGate: green
+    WAIT_GATE out -> STEP_GATE in
+    WAIT_GATE out -> MASK in
 
-  network TimerOut: red
-    TIMER OUT -> TIMEOUT_EDGE IN
-  network TimerPulse: red
-    TIMEOUT_EDGE OUT -> RESET_ON_TIMEOUT in
+  network WaitStep: green
+    STEP_GATE out -> INC in
+
+  network CountState: red
+    MASK out -> INC in
+    MASK out -> STEP_GATE in
+    MASK out -> TIMEOUT_REACHED in
+
+  network CountNext: red
+    INC out -> MASK in
+
+  network TimeoutOut: red
+    TIMEOUT_REACHED out -> TIMEOUT_PREV in
+    TIMEOUT_REACHED out -> RESET_ON_TIMEOUT in
+
+  network TimeoutPrev: green
+    TIMEOUT_PREV out -> RESET_ON_TIMEOUT in
 
   network TimeoutReset: green
-    RESET_ON_TIMEOUT out -> TIMER RESET_IN
+    RESET_ON_TIMEOUT out -> WAIT_GATE in
     RESET_ON_TIMEOUT out -> LATCH RESET_IN
 
 tests:
@@ -97,7 +116,8 @@ tests:
       apply signal "A" = 0 to pin IN red continuously
     tick 6:
       assert signal "A" = 0 on pin OUT red
-      assert signal "O" = 0 on network TimerOut
+      assert signal "O" = 0 on network TimeoutOut
+      assert signal "T" = 0 on network CountState
 
   holds-value-during-throttle-window:
     tick 0:
@@ -119,14 +139,58 @@ tests:
     tick 24:
       assert signal "A" = 3 on pin OUT red
 
-  keeps-throttle-disabled-when-timeout-zero:
+  two-full-relatches-observe-full-duration:
     tick 0:
-      apply signal "H" = 0 to pin TIMEOUT red continuously
-      apply signal "A" = 4 to pin IN red
+      apply signal "H" = 3 to pin TIMEOUT red continuously
+      apply signal "A" = 8 to pin IN red
     tick 3:
+      assert signal "A" = 8 on pin OUT red
+      apply signal "A" = 5 to pin IN red continuously
+    tick 14:
+      assert signal "A" = 8 on pin OUT red
+    tick 24:
+      assert signal "A" = 5 on pin OUT red
+      apply signal "A" = 2 to pin IN red continuously
+    tick 30:
+      assert signal "A" = 5 on pin OUT red
+    tick 35:
+      assert signal "A" = 0 on pin OUT red
+    tick 45:
+      assert signal "A" = 2 on pin OUT red
+
+  latch-zero-relatch:
+    tick 0:
+      apply signal "H" = 3 to pin TIMEOUT red continuously
+      apply signal "A" = 6 to pin IN red
+    tick 3:
+      assert signal "A" = 6 on pin OUT red
+      apply signal "A" = 0 to pin IN red continuously
+    tick 14:
+      assert signal "A" = 6 on pin OUT red
+    tick 24:
+      assert signal "A" = 0 on pin OUT red
+      assert signal "T" = 0 on network CountState
+      assert signal "O" = 0 on network TimeoutOut
+      apply signal "A" = 4 to pin IN red continuously
+    tick 30:
       assert signal "A" = 4 on pin OUT red
-    tick 7:
-      assert signal "A" = 4 on pin OUT red
+
+  zero-latch-relatch:
+    tick 0:
+      apply signal "H" = 3 to pin TIMEOUT red continuously
+      apply signal "A" = 0 to pin IN red continuously
+    tick 10:
+      assert signal "A" = 0 on pin OUT red
+      assert signal "T" = 0 on network CountState
+      assert signal "O" = 0 on network TimeoutOut
+      apply signal "A" = 7 to pin IN red
+    tick 14:
+      assert signal "A" = 7 on pin OUT red
+      apply signal "A" = 2 to pin IN red continuously
+    tick 24:
+      assert signal "A" = 7 on pin OUT red
+    tick 34:
+      assert signal "A" = 2 on pin OUT red
 
   output-pollution-does-not-corrupt-state:
     tick 0:
