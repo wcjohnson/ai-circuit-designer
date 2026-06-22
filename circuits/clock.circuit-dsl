@@ -1,0 +1,106 @@
+// Function:
+// Emits a one-tick pulse every H ticks while RUN is active.
+// Channels:
+// RUN (input): red run gate; any non-zero enables generation (measured minimum RUN->OUT latency with H=3: 6 ticks).
+// TIMEOUT (input): red timeout threshold via signal H; sets exact steady-state pulse spacing to H ticks while enabled (assumed H > 0).
+// OUT (output): red pulse output where P=1 for one tick at each timeout interval.
+circuit: pulse-generator
+
+combinators:
+  RUN: io medium-electric-pole
+  TIMEOUT: io medium-electric-pole
+  OUT: io medium-electric-pole
+
+  RUN_ACTIVE: decider
+    conditions:
+      anything R != 0
+    outputs:
+      "W" = 1
+
+  COUNTER: arithmetic
+    "C" R + "W" R -> "C"
+
+  PHASE: arithmetic
+    "C" R % "H" R -> "M"
+
+  PULSE: decider
+    conditions:
+      "W" R != 0
+      AND "C" R >= "H" R
+      AND "M" R = 0
+    outputs:
+      "P" = 1
+
+wires:
+  network RunIn: red
+    RUN -> RUN_ACTIVE in
+
+  network TimeoutIn: red
+    TIMEOUT -> PHASE in
+
+  network EnableBus: red
+    RUN_ACTIVE out -> COUNTER in
+    RUN_ACTIVE out -> PULSE in
+
+  network CountState: red
+    COUNTER out -> COUNTER in
+    COUNTER out -> PHASE in
+    COUNTER out -> PULSE in
+
+  network PhaseState: red
+    PHASE out -> PULSE in
+
+  network PulseOut: red
+    PULSE out -> OUT
+
+tests:
+  idle-without-run-has-no-pulse:
+    tick 0:
+      apply signal "H" = 3 to pin TIMEOUT red continuously
+      assert window [+0, +30]: always nothing on pin OUT red
+
+  run-enabled-emits-periodic-pulses:
+    tick 0:
+      apply signal "H" = 3 to pin TIMEOUT red continuously
+      apply signal "R" = 1 to pin RUN red continuously
+      assert window [+0, +5]: always nothing on pin OUT red
+      assert at +6: always exactly("P" = 1) on pin OUT red
+      assert at +7: always nothing on pin OUT red
+      assert at +9: always exactly("P" = 1) on pin OUT red
+      assert at +10: always nothing on pin OUT red
+      assert at +12: always exactly("P" = 1) on pin OUT red
+      assert at +13: always nothing on pin OUT red
+      assert at +15: always exactly("P" = 1) on pin OUT red
+
+  run-low-blocks-generation:
+    tick 0:
+      apply signal "H" = 3 to pin TIMEOUT red continuously
+      apply signal "R" = 1 to pin RUN red continuously
+      assert at +6: always exactly("P" = 1) on pin OUT red
+    tick 6:
+      apply signal "R" = 0 to pin RUN red continuously
+      assert window [+1, +19]: always nothing on pin OUT red
+    tick 24:
+      apply signal "R" = 1 to pin RUN red continuously
+      assert window [+0, +10]: sometimes exactly("P" = 1) on pin OUT red
+
+  timeout-value-controls-period:
+    tick 0:
+      apply signal "H" = 5 to pin TIMEOUT red continuously
+      apply signal "R" = 1 to pin RUN red continuously
+      assert window [+0, +7]: always nothing on pin OUT red
+      assert at +8: always exactly("P" = 1) on pin OUT red
+      assert at +9: always nothing on pin OUT red
+      assert at +13: always exactly("P" = 1) on pin OUT red
+      assert at +14: always nothing on pin OUT red
+      assert at +18: always exactly("P" = 1) on pin OUT red
+
+  output-pollution-does-not-corrupt-counter-state:
+    tick 0:
+      apply signal "H" = 3 to pin TIMEOUT red continuously
+      apply signal "R" = 1 to pin RUN red continuously
+      assert at +6: always signal "P" = 1 on pin OUT red
+    tick 6:
+      apply signal "X" = 99 to pin OUT red continuously
+      assert window [+0, +16]: always "X" = 0 on network CountState
+      assert window [+0, +16]: always "X" = 0 on network PhaseState

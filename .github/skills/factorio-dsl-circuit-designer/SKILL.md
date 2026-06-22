@@ -178,6 +178,10 @@ Return exactly:
 2. Complete DSL in one fenced block
 3. Short test coverage summary (what each test validates)
 
+Reporting tone guidance:
+- When a change reduces latency or otherwise improves timing, report it as a positive improvement.
+- Avoid framing latency gains as caveats or regressions when behavior contracts remain satisfied.
+
 Prefer concise, executable DSL over prose.
 
 ## Quality Checklist
