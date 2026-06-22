@@ -245,6 +245,21 @@ tests:
       assert window [+6, +20]: always exactly("A" = 2) on pin OUT red
       assert window [+6, +20]: never exactly("A" = 8) on pin OUT red
 
+  temporary-timeout-raise-blocks-change-then-lower-allows-bounded-relatch:
+    tick 0:
+      apply signal "H" = 3 to pin TIMEOUT red continuously
+      apply signal "A" = 9 to pin IN red
+    tick 3:
+      assert: exactly("A" = 9) on pin OUT red
+      apply signal "H" = 12 to pin TIMEOUT red continuously
+      apply signal "A" = 4 to pin IN red continuously
+      assert window [+0, +10]: always exactly("A" = 9) on pin OUT red
+    tick 14:
+      assert: exactly("A" = 9) on pin OUT red
+      apply signal "H" = 3 to pin TIMEOUT red continuously
+      assert window [+0, +4]: always exactly("A" = 9) on pin OUT red
+      assert window [+5, +22]: always exactly("A" = 4) on pin OUT red
+
   output-pollution-does-not-corrupt-state:
     tick 0:
       apply signal "H" = 5 to pin TIMEOUT red continuously
