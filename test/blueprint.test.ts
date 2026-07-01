@@ -77,6 +77,13 @@ const validDeciderControlBehavior: DeciderControlBehavior = {
         constant: 1,
         networks: { red: false, green: true }
       }
+    ],
+    else_outputs: [
+      {
+        signal: { type: 'virtual', name: 'signal-D' },
+        copy_count_from_input: false,
+        constant: -1
+      }
     ]
   }
 };

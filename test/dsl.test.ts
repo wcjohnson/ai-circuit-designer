@@ -397,6 +397,57 @@ combinators:
   );
 });
 
+test('compileDsl parses decider else_outputs subsection', () => {
+  const source = `
+combinators:
+  D1: decider
+    conditions:
+      "A" R > 0
+    outputs:
+      "T" = 1
+    else_outputs:
+      "F" = 2
+`;
+
+  const compiled = compileDsl(source);
+  const decider = compiled.blueprint.entities.find((entity) => entity.name === 'decider-combinator') as any;
+  const conditions = decider?.control_behavior?.decider_conditions;
+
+  assert.ok(decider);
+  assert.deepEqual(conditions?.outputs, [
+    {
+      signal: { type: 'virtual', name: 'signal-T' },
+      copy_count_from_input: false,
+      constant: 1
+    }
+  ]);
+  assert.deepEqual(conditions?.else_outputs, [
+    {
+      signal: { type: 'virtual', name: 'signal-F' },
+      copy_count_from_input: false,
+      constant: 2
+    }
+  ]);
+});
+
+test('compileDsl rejects decider each-LHS with every/everything wildcard else output', () => {
+  const source = `
+combinators:
+  D1: decider
+    conditions:
+      each R > 0
+    outputs:
+      each = input R
+    else_outputs:
+      every = 1
+`;
+
+  assert.throws(
+    () => compileDsl(source),
+    /cannot use 'every'\/'everything' output wildcard/
+  );
+});
+
 test('compileDsl inlines imported subcircuit endpoints', () => {
   const dir = mkdtempSync(join(tmpdir(), 'dsl-subcircuit-'));
   try {

@@ -146,6 +146,7 @@ export interface DeciderOutputSpec {
 export interface DeciderConditions {
   conditions: DeciderCondition[];
   outputs: DeciderOutputSpec[];
+  else_outputs?: DeciderOutputSpec[];
 }
 
 export interface DeciderControlBehavior {

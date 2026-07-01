@@ -4,7 +4,7 @@
 // RUN (input): red run gate; any non-zero enables generation (measured minimum RUN->OUT latency with H=3: 6 ticks).
 // TIMEOUT (input): red timeout threshold via signal H; sets exact steady-state pulse spacing to H ticks while enabled (assumed H > 0).
 // OUT (output): red pulse output where P=1 for one tick at each timeout interval.
-circuit: pulse-generator
+circuit: clock
 
 combinators:
   RUN: io medium-electric-pole

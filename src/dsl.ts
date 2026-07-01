@@ -153,6 +153,7 @@ interface ParsedCombinator {
   arithmetic?: ParsedArithmetic;
   deciderConditions: ParsedDeciderCondition[];
   deciderOutputs: ParsedDeciderOutput[];
+  deciderElseOutputs: ParsedDeciderOutput[];
   selectorSettings: ParsedSelectorSettings;
 }
 
@@ -881,6 +882,7 @@ function createCombinatorDeclaration(id: string, typeSpec: string, line: number)
     arithmetic: undefined,
     deciderConditions: [],
     deciderOutputs: [],
+    deciderElseOutputs: [],
     selectorSettings: {}
   };
 }
@@ -927,8 +929,8 @@ function parseCombinatorBody(combinator: ParsedCombinator, body: SourceLine[]): 
       }
 
       const header = line.text.toLowerCase();
-      if (header !== 'conditions:' && header !== 'outputs:') {
-        throw new Error(`Line ${line.line}: decider body expects 'conditions:' or 'outputs:' subsections.`);
+      if (header !== 'conditions:' && header !== 'outputs:' && header !== 'else_outputs:') {
+        throw new Error(`Line ${line.line}: decider body expects 'conditions:', 'outputs:', or 'else_outputs:' subsections.`);
       }
 
       const [nextIndex, block] = readIndentedBlock(body, index + 1, baseIndent);
@@ -945,8 +947,10 @@ function parseCombinatorBody(combinator: ParsedCombinator, body: SourceLine[]): 
 
       if (header === 'conditions:') {
         combinator.deciderConditions.push(...block.map((entry) => parseDeciderCondition(entry.text, entry.line)));
-      } else {
+      } else if (header === 'outputs:') {
         combinator.deciderOutputs.push(...block.map((entry) => parseDeciderOutput(entry.text, entry.line)));
+      } else {
+        combinator.deciderElseOutputs.push(...block.map((entry) => parseDeciderOutput(entry.text, entry.line)));
       }
 
       index = nextIndex;
@@ -1890,12 +1894,36 @@ function buildEntity(combinator: ParsedCombinator, entityNumber: number, positio
       compare_type: condition.compareType
     }));
 
-    const outputs: DeciderOutputSpec[] = combinator.deciderOutputs.map((output) => ({
-      signal: output.signal,
-      copy_count_from_input: output.value.kind === 'input',
-      constant: output.value.kind === 'constant' ? output.value.value : undefined,
-      networks: output.value.kind === 'input' ? output.value.networks : undefined
-    }));
+    const outputs: DeciderOutputSpec[] = combinator.deciderOutputs.map((output) => {
+      if (output.value.kind === 'input') {
+        return {
+          signal: output.signal,
+          copy_count_from_input: true,
+          ...(output.value.networks ? { networks: output.value.networks } : {})
+        };
+      }
+
+      return {
+        signal: output.signal,
+        copy_count_from_input: false,
+        constant: output.value.value
+      };
+    });
+    const elseOutputs: DeciderOutputSpec[] = combinator.deciderElseOutputs.map((output) => {
+      if (output.value.kind === 'input') {
+        return {
+          signal: output.signal,
+          copy_count_from_input: true,
+          ...(output.value.networks ? { networks: output.value.networks } : {})
+        };
+      }
+
+      return {
+        signal: output.signal,
+        copy_count_from_input: false,
+        constant: output.value.value
+      };
+    });
 
     const entity: DeciderCombinatorEntity = {
       ...base,
@@ -1903,7 +1931,8 @@ function buildEntity(combinator: ParsedCombinator, entityNumber: number, positio
       control_behavior: {
         decider_conditions: {
           conditions,
-          outputs
+          outputs,
+          else_outputs: elseOutputs.length > 0 ? elseOutputs : undefined
         }
       }
     };
@@ -2686,7 +2715,7 @@ function validateDeciderWildcardOutputs(combinator: ParsedCombinator): void {
     return;
   }
 
-  for (const output of combinator.deciderOutputs) {
+  for (const output of [...combinator.deciderOutputs, ...combinator.deciderElseOutputs]) {
     const outputSignalName = output.signal.name;
     if (outputSignalName === 'signal-everything' || outputSignalName === 'signal-every') {
       throw new Error(

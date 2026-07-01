@@ -203,6 +203,7 @@ interface DeciderOutputSpec {
 interface DeciderConditions {
   conditions?: DeciderCondition[];
   outputs?: DeciderOutputSpec[];
+  else_outputs?: DeciderOutputSpec[];
 }
 
 const SUPPORTED_COMBINATORS = new Set<string>([
@@ -621,19 +622,17 @@ function evaluateDecider(entity: BlueprintEntity, inputs: CombinatorWireInputs):
   const config = (behavior.decider_conditions ?? {}) as DeciderConditions;
   const conditions = Array.isArray(config.conditions) ? config.conditions : [];
   const outputs = Array.isArray(config.outputs) ? config.outputs : [];
+  const elseOutputs = Array.isArray(config.else_outputs) ? config.else_outputs : [];
   const firstCondition = conditions[0];
-  if (!firstCondition || outputs.length === 0) {
+  if (!firstCondition || (outputs.length === 0 && elseOutputs.length === 0)) {
     return new Map();
   }
   if (operandFrom(firstCondition.first_signal, undefined).kind === 'each') {
-    return evaluateEachDecider(inputs, conditions, outputs);
+    return evaluateEachDecider(inputs, conditions, outputs, elseOutputs);
   }
 
   const passed = evaluateDeciderConditions(conditions, inputs);
-  if (!passed) {
-    return new Map();
-  }
-  return emitDeciderOutputs(inputs, outputs);
+  return emitDeciderOutputs(inputs, passed ? outputs : elseOutputs);
 }
 
 function evaluateDeciderConditions(conditions: DeciderCondition[], inputs: CombinatorWireInputs, eachSignal?: SignalName): boolean {
@@ -663,10 +662,12 @@ function evaluateDeciderCondition(condition: DeciderCondition, inputs: Combinato
 function evaluateEachDecider(
   inputs: CombinatorWireInputs,
   conditions: DeciderCondition[],
-  outputs: DeciderOutputSpec[]
+  outputs: DeciderOutputSpec[],
+  elseOutputs: DeciderOutputSpec[]
 ): SignalBag {
   const result: SignalBag = new Map();
-  const emittedAnythingOutputs = new Set<number>();
+  const emittedAnythingTrueOutputs = new Set<number>();
+  const emittedAnythingElseOutputs = new Set<number>();
   const signalNames = new Set<SignalName>();
   for (const condition of conditions) {
     for (const signal of selectCircuitNetworks(inputs, condition.first_signal_networks).keys()) {
@@ -677,10 +678,10 @@ function evaluateEachDecider(
     }
   }
   for (const signal of [...signalNames].sort()) {
-    if (!evaluateDeciderConditions(conditions, inputs, signal)) {
-      continue;
-    }
-    for (const [outputIndex, output] of outputs.entries()) {
+    const passed = evaluateDeciderConditions(conditions, inputs, signal);
+    const activeOutputs = passed ? outputs : elseOutputs;
+    const activeAnythingOutputs = passed ? emittedAnythingTrueOutputs : emittedAnythingElseOutputs;
+    for (const [outputIndex, output] of activeOutputs.entries()) {
       const outputSignal = signalName(output.signal) ?? 'signal-each';
 
       // In each-mode deciders, `everything` output is illegal in Factorio; ignore it.
@@ -689,13 +690,13 @@ function evaluateEachDecider(
       }
 
       // In each-mode deciders, `anything` emits once for the first matching signal only.
-      if (isAnythingOutputSignal(outputSignal) && emittedAnythingOutputs.has(outputIndex)) {
+      if (isAnythingOutputSignal(outputSignal) && activeAnythingOutputs.has(outputIndex)) {
         continue;
       }
 
       const value = output.copy_count_from_input === false ? output.constant ?? 1 : getSignal(selectCircuitNetworks(inputs, output.networks), signal);
       if (isAnythingOutputSignal(outputSignal)) {
-        emittedAnythingOutputs.add(outputIndex);
+        activeAnythingOutputs.add(outputIndex);
       }
 
       addSignal(result, isEachOutputSignal(outputSignal) || isAnythingOutputSignal(outputSignal) ? signal : outputSignal, value);

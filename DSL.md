@@ -114,6 +114,7 @@ Body contains subsections:
 
 - `conditions:`
 - `outputs:`
+- `else_outputs:` (optional)
 
 Condition lines:
 
@@ -127,6 +128,10 @@ Output lines:
 
 - `<signal> = input [R|G|RG]`
 - `<signal> = <integer>`
+
+`outputs:` are emitted when decider conditions evaluate true.
+
+`else_outputs:` lines use the same syntax and are emitted when decider conditions evaluate false.
 
 Selector combinator
 
