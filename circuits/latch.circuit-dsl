@@ -10,48 +10,29 @@ combinators:
   OUT: io medium-electric-pole
 
   OUT_CLEAN: arithmetic
-    each R + 0 -> each
-
-  HAS_INPUT: decider
-    conditions:
-      anything R != 0
-    outputs:
-      "S" = 1
+    each G + 0 -> each
 
   DATA_DELAY: arithmetic
     each R + 0 -> each
 
-  CAPTURE: decider
+  LATCH: decider
     conditions:
-      "S" G != 0
-      AND anything R != 0
+      anything R != 0
     outputs:
       every = input R
-
-  HOLD: decider
-    conditions:
-      "S" G = 0
-      AND anything R != 0
-    outputs:
-      every = input R
+    else_outputs:
+      every = input G
 
 wires:
   network Input: red
-    IN -> HAS_INPUT in
     IN -> DATA_DELAY in
 
   network InputDelayed: red
-    DATA_DELAY out -> CAPTURE in
+    DATA_DELAY out -> LATCH in
 
-  network SetGate: green
-    HAS_INPUT out -> CAPTURE in
-    HAS_INPUT out -> HOLD in
-
-  network State: red
-    CAPTURE out -> HOLD in
-    CAPTURE out -> OUT_CLEAN in
-    HOLD out -> HOLD in
-    HOLD out -> OUT_CLEAN in
+  network State: green
+    LATCH out -> LATCH in
+    LATCH out -> OUT_CLEAN in
 
   network PublicOut: red
     OUT_CLEAN out -> OUT

@@ -11,19 +11,13 @@ combinators:
   TIMEOUT: io medium-electric-pole
   OUT: io medium-electric-pole
 
-  LATCH_CAPTURE: decider
+  LATCH_CORE: decider
     conditions:
-      "L" G = 0
-      AND anything R != 0
+      "L" R = 0
     outputs:
       every = input R
-
-  LATCH_HOLD: decider
-    conditions:
-      "L" G != 0
-      AND anything R != 0
-    outputs:
-      every = input R
+    else_outputs:
+      every = input G
 
   LATCH_MARK: decider
     conditions:
@@ -33,7 +27,7 @@ combinators:
       "L" = 1
 
   LATCH_CLEAN: arithmetic
-    each R + 0 -> each
+    each G + 0 -> each
 
   HAS_OUT: decider
     conditions:
@@ -70,25 +64,21 @@ combinators:
 
 wires:
   network InputData: red
-    IN -> LATCH_CAPTURE in
+    IN -> LATCH_CORE in
     IN -> LATCH_MARK in
 
-  network LatchOut: red
-    LATCH_CAPTURE out -> LATCH_HOLD in
-    LATCH_CAPTURE out -> LATCH_CLEAN in
-    LATCH_HOLD out -> LATCH_HOLD in
-    LATCH_HOLD out -> LATCH_CLEAN in
+  network LatchOut: green
+    LATCH_CORE out -> LATCH_CORE in
+    LATCH_CORE out -> LATCH_CLEAN in
 
   network LatchStable: green
     LATCH_CLEAN out -> HAS_OUT in
 
   network LatchReset: green
-    RESET_ON_TIMEOUT out -> LATCH_CAPTURE in
-    RESET_ON_TIMEOUT out -> LATCH_HOLD in
     RESET_ON_TIMEOUT out -> LATCH_MARK in
 
-  network LatchLock: green
-    LATCH_MARK out -> LATCH_CAPTURE in
+  network LatchLock: red
+    LATCH_MARK out -> LATCH_CORE in
     LATCH_MARK out -> LATCH_MARK in
 
   network PublicOut: red
